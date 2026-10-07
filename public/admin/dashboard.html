@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="pt" data-tema="claro">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard — GeoTrack</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="topo" id="topo"></div>
+
+<div class="painel">
+  <h2>Alertas</h2>
+  <div id="lista-alertas" style="color:var(--alerta);"></div>
+</div>
+
+<div class="painel">
+  <h2>Projetos por mês</h2>
+  <div id="grafico-mensal" style="display:flex; align-items:flex-end; gap:6px; height:200px;"></div>
+  <div style="display:flex; gap:16px; margin-top:8px; font-size:12px; color:var(--texto-suave);">
+    <span>🟩 Concluídos a tempo</span><span>🟥 Entregues com atraso</span><span>🟦 Em curso</span>
+  </div>
+</div>
+
+<div class="painel">
+  <h2>Resumo</h2>
+  <div class="grelha" id="resumo-cartoes"></div>
+</div>
+
+<script src="../js/supabase-client.js"></script>
+<script src="../js/auth.js"></script>
+<script src="../js/tema.js"></script>
+<script src="../js/nav.js"></script>
+<script>
+async function iniciar() {
+  const sessao = await exigirAdmin();
+  if (!sessao) return;
+  renderNavAdmin('dashboard.html');
+  await carregarAlertas();
+  await carregarResumoEGrafico();
+}
+
+async function carregarAlertas() {
+  const { data } = await supabase.from('historico').select('*').eq('tipo', 'alerta').eq('estado', 'pendente').order('data_criacao', { ascending: false });
+  const div = document.getElementById('lista-alertas');
+  if (!data || !data.length) { div.innerHTML = '<p style="color:var(--texto-suave)">Sem alertas pendentes.</p>'; return; }
+  div.innerHTML = data.map(a => `
+    <p>⚠️ ${a.mensagem} <small>(${new Date(a.data_criacao).toLocaleString('pt-PT')})</small>
+       <button onclick="resolverAlerta('${a.id}')">Marcar como lido</button></p>
+  `).join('');
+}
+
+async function resolverAlerta(id) {
+  await supabase.from('historico').update({ estado: 'resolvido' }).eq('id', id);
+  await carregarAlertas();
+}
+
+async function carregarResumoEGrafico() {
+  const { data: projetos } = await supabase.from('projetos').select('*');
+  const lista = projetos || [];
+
+  const abertos = lista.filter(p => p.estado === 'aberto' || p.estado === 'em_curso').length;
+  const concluidos = lista.filter(p => p.estado === 'concluido').length;
+  const atrasados = lista.filter(p => p.estado === 'atrasado').length;
+
+  document.getElementById('resumo-cartoes').innerHTML = `
+    <div class="painel" style="flex:1;"><h3>${lista.length}</h3><p>Total de Projetos</p></div>
+    <div class="painel" style="flex:1;"><h3>${abertos}</h3><p>Abertos / Em curso</p></div>
+    <div class="painel" style="flex:1;"><h3>${concluidos}</h3><p>Concluídos</p></div>
+    <div class="painel" style="flex:1;"><h3>${atrasados}</h3><p>Atrasados</p></div>
+  `;
+
+  // Agrupar por mês de data_conclusao (ou data_prevista_conclusao se ainda não concluído)
+  const meses = {};
+  lista.forEach(p => {
+    const ref = p.data_conclusao || p.data_prevista_conclusao;
+    if (!ref) return;
+    const chave = ref.slice(0, 7); // YYYY-MM
+    meses[chave] = meses[chave] || { concluido_a_tempo: 0, atrasado: 0, em_curso: 0 };
+    if (p.estado === 'concluido') {
+      const aTempo = !p.data_prevista_conclusao || p.data_conclusao <= p.data_prevista_conclusao;
+      meses[chave][aTempo ? 'concluido_a_tempo' : 'atrasado']++;
+    } else {
+      meses[chave].em_curso++;
+    }
+  });
+
+  const chaves = Object.keys(meses).sort();
+  const max = Math.max(1, ...chaves.map(c => meses[c].concluido_a_tempo + meses[c].atrasado + meses[c].em_curso));
+  document.getElementById('grafico-mensal').innerHTML = chaves.map(c => {
+    const m = meses[c];
+    const total = m.concluido_a_tempo + m.atrasado + m.em_curso;
+    const altura = (total / max) * 160;
+    return `
+      <div style="display:flex; flex-direction:column; align-items:center; width:40px;">
+        <div style="display:flex; flex-direction:column-reverse; height:${altura}px; width:24px;">
+          <div style="background:#1f6f54; height:${(m.concluido_a_tempo/total)*altura || 0}px;"></div>
+          <div style="background:#c0392b; height:${(m.atrasado/total)*altura || 0}px;"></div>
+          <div style="background:#3b82f6; height:${(m.em_curso/total)*altura || 0}px;"></div>
+        </div>
+        <small style="font-size:10px; margin-top:4px;">${c}</small>
+      </div>`;
+  }).join('') || '<p style="color:var(--texto-suave)">Ainda sem dados suficientes.</p>';
+}
+
+iniciar();
+</script>
+</body>
+</html>

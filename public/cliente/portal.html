@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="pt" data-tema="claro">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portal do Cliente — GeoTrack</title>
+<link rel="stylesheet" href="../css/style.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  #envolvente { display:flex; gap:12px; margin:16px; }
+  #mapa { flex:1; height:80vh; }
+  #barra-lateral { width:360px; display:flex; flex-direction:column; gap:12px; }
+  #bloco-contacto { flex:0 0 auto; }
+  #bloco-detalhe { flex:1; overflow:auto; }
+</style>
+</head>
+<body>
+<div class="topo" id="topo"></div>
+
+<div class="painel" style="margin-bottom:0;">
+  <label>Os meus projetos:</label>
+  <select id="seletor-projeto" onchange="irParaProjetoSelecionado()" style="width:400px;"></select>
+</div>
+
+<div id="envolvente">
+  <div id="mapa"></div>
+  <div id="barra-lateral">
+    <div class="painel" id="bloco-contacto">
+      <h4>Contacto com a GEOLAYER</h4>
+      <div id="lista-notas" style="max-height:140px; overflow:auto; font-size:13px;"></div>
+      <textarea id="nova-nota" placeholder="Escreve uma nota/pergunta sobre este projeto..." style="width:100%" rows="2"></textarea>
+      <button class="primario" onclick="enviarNota()">Enviar</button>
+    </div>
+    <div class="painel" id="bloco-detalhe">
+      <p style="color:var(--texto-suave)">Seleciona um projeto para ver os detalhes.</p>
+    </div>
+  </div>
+</div>
+
+<script src="../js/supabase-client.js"></script>
+<script src="../js/auth.js"></script>
+<script src="../js/tema.js"></script>
+<script src="../js/nav.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.geometryutil/0.10.3/leaflet.geometryutil.min.js"></script>
+<script>
+let mapa, cliente, meusProjetos = [], projetoAtual = null, camadaAtual;
+
+async function iniciar() {
+  cliente = await exigirCliente();
+  if (!cliente) return;
+  renderNavCliente();
+  iniciarMapa();
+  await carregarMeusProjetos();
+}
+
+function iniciarMapa() {
+  mapa = L.map('mapa').setView([39.6, -8.0], 7);
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OpenStreetMap' });
+  const esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri' });
+  osm.addTo(mapa);
+  L.control.layers({ 'OpenStreetMap': osm, 'ESRI World Imagery': esri }).addTo(mapa);
+
+  const desenhados = new L.FeatureGroup().addTo(mapa);
+  mapa.addControl(new L.Control.Draw({
+    draw: { polygon: true, polyline: true, marker: false, circle: false, rectangle: false, circlemarker: false },
+    edit: { featureGroup: desenhados },
+  }));
+  mapa.on(L.Draw.Event.CREATED, (e) => {
+    desenhados.addLayer(e.layer);
+    let medida = '';
+    if (e.layerType === 'polyline') medida = 'Distância: ' + (L.GeometryUtil.length(e.layer) / 1000).toFixed(3) + ' km';
+    else if (e.layerType === 'polygon') medida = 'Área: ' + (L.GeometryUtil.geodesicArea(e.layer.getLatLngs()[0]) / 10000).toFixed(3) + ' ha';
+    if (medida) {
+      e.layer.bindPopup(medida).openPopup();
+      document.getElementById('resultado-medicao').textContent = medida;
+    }
+  });
+}
+
+async function carregarMeusProjetos() {
+  const { data } = await supabase.from('projetos_mapa').select('*').eq('cliente_id', cliente.id);
+  meusProjetos = data || [];
+  document.getElementById('seletor-projeto').innerHTML = meusProjetos.map(p => `<option value="${p.id}">${p.titulo}</option>`).join('');
+  if (meusProjetos.length) {
+    document.getElementById('seletor-projeto').value = meusProjetos[0].id;
+    irParaProjetoSelecionado();
+  }
+}
+
+function irParaProjetoSelecionado() {
+  const id = document.getElementById('seletor-projeto').value;
+  projetoAtual = meusProjetos.find(p => p.id === id);
+  if (!projetoAtual) return;
+  if (camadaAtual) mapa.removeLayer(camadaAtual);
+  if (projetoAtual.geom_geojson) {
+    camadaAtual = L.geoJSON(JSON.parse(projetoAtual.geom_geojson), { style: { color: '#1f6f54' } }).addTo(mapa);
+    mapa.fitBounds(camadaAtual.getBounds(), { maxZoom: 16 });
+  }
+  mostrarDetalhe();
+  carregarNotas();
+}
+
+function mostrarDetalhe() {
+  const p = projetoAtual;
+  const nivel = cliente.nivel_visualizacao;
+  let linhas = `<tr><td>Estado</td><td><span class="tag tag-${p.estado}">${p.estado}</span></td></tr>`;
+  linhas += `<tr><td>Data de Abertura</td><td>${p.data_abertura || '-'}</td></tr>`;
+  if (nivel !== 'simples') {
+    linhas += `<tr><td>Data Prevista</td><td>${p.data_prevista_conclusao || '-'}</td></tr>`;
+    linhas += `<tr><td>Área</td><td>${p.area || '-'} ha</td></tr>`;
+    linhas += `<tr><td>Distrito/Concelho</td><td>${(p.proj_distrito||[]).join(', ')} / ${(p.proj_concelho||[]).join(', ')}</td></tr>`;
+  }
+  if (nivel === 'avancado') {
+    linhas += `<tr><td>Data do Voo</td><td>${p.voo_data || '-'}</td></tr>`;
+    linhas += `<tr><td>Nº Processo DGT</td><td>${p.num_proc_dgt || '-'}</td></tr>`;
+    linhas += `<tr><td>Técnico Responsável</td><td>${p.coordenador_geolayer || '-'}</td></tr>`;
+  }
+  document.getElementById('bloco-detalhe').innerHTML = `
+    <h4>${p.titulo}</h4>
+    <table>${linhas}</table>
+    <p id="resultado-medicao" style="color:var(--texto-suave); font-size:13px;">Usa as ferramentas de desenho no mapa para medir distâncias/áreas.</p>
+  `;
+}
+
+async function carregarNotas() {
+  const { data } = await supabase.from('historico').select('*')
+    .eq('cliente_id', cliente.id).in('tipo', ['nota_cliente','lembrete']).order('data_criacao', { ascending: false }).limit(10);
+  document.getElementById('lista-notas').innerHTML = (data || []).map(n => `
+    <p><strong>${n.origem === 'cliente' ? 'Eu' : 'GEOLAYER'}:</strong> ${n.mensagem} <small>(${new Date(n.data_criacao).toLocaleDateString('pt-PT')})</small></p>
+  `).join('') || '<p style="color:var(--texto-suave)">Sem notas ainda.</p>';
+}
+
+async function enviarNota() {
+  const texto = document.getElementById('nova-nota').value.trim();
+  if (!texto || !projetoAtual) return;
+  await supabase.from('historico').insert({
+    projeto_id: projetoAtual.id, cliente_id: cliente.id,
+    tipo: 'nota_cliente', origem: 'cliente', mensagem: texto,
+  });
+  document.getElementById('nova-nota').value = '';
+  await carregarNotas();
+}
+
+iniciar();
+</script>
+</body>
+</html>

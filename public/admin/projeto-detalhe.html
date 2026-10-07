@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="pt" data-tema="claro">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projeto — GeoTrack</title>
+<link rel="stylesheet" href="../css/style.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>fieldset{border:1px solid var(--borda); border-radius:8px; margin-bottom:14px;} legend{color:var(--primaria); font-weight:600;} label{font-size:13px; color:var(--texto-suave);} .campo{margin-bottom:10px;}</style>
+</head>
+<body>
+<div class="topo" id="topo"></div>
+
+<div class="painel">
+  <h2 id="titulo-pagina">Novo Projeto</h2>
+  <form onsubmit="guardarProjeto(event)">
+    <input type="hidden" id="projeto-id">
+
+    <fieldset>
+      <legend>Identificação</legend>
+      <div class="grelha">
+        <div class="campo"><label>Cliente*</label><br><select id="p-cliente" required></select></div>
+        <div class="campo"><label>Título / Nome da Cartografia*</label><br><input id="p-titulo" required style="width:320px"></div>
+        <div class="campo"><label>Código GEOLAYER</label><br><input id="p-cod-geolayer"></div>
+        <div class="campo"><label>Estado</label><br>
+          <select id="p-estado">
+            <option value="aberto">Aberto</option><option value="em_curso">Em curso</option>
+            <option value="concluido">Concluído</option><option value="atrasado">Atrasado</option>
+            <option value="cancelado">Cancelado</option>
+          </select>
+        </div>
+        <div class="campo"><label>Data de Abertura</label><br><input type="date" id="p-data-abertura"></div>
+        <div class="campo"><label>Data Prevista de Conclusão</label><br><input type="date" id="p-data-prevista"></div>
+        <div class="campo"><label>Data de Conclusão (real, só ao fechar)</label><br><input type="date" id="p-data-conclusao"></div>
+      </div>
+      <div class="campo"><label>Descrição</label><br><textarea id="p-descricao" style="width:100%" rows="2"></textarea></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Localização</legend>
+      <p style="font-size:13px;color:var(--texto-suave);">Desenha o polígono ou ponto do projeto no mapa — distrito/concelho/freguesia são calculados automaticamente.</p>
+      <div id="mapa-projeto" style="height:320px;border-radius:8px;"></div>
+      <div class="grelha" style="margin-top:10px;">
+        <div class="campo"><label>Local do Voo</label><br><input id="p-local"></div>
+        <div class="campo"><label>Sistema de Coordenadas</label><br>
+          <select id="p-sis-coordenadas">
+            <option value="EPSG:3763">PT-TM06/ETRS89 (Continente) — EPSG:3763</option>
+            <option value="EPSG:5011">PTRA08 Açores (geocêntrico) — EPSG:5011</option>
+            <option value="EPSG:5016">PTRA08/UTM28N (Madeira/Porto Santo) — EPSG:5016</option>
+            <option value="OUTRO">Outro / datum local (indicar em observações)</option>
+          </select>
+        </div>
+        <div class="campo"><label>Distrito(s)</label><br><input id="p-distrito" readonly></div>
+        <div class="campo"><label>Concelho(s)</label><br><input id="p-concelho" readonly></div>
+        <div class="campo"><label>Freguesia(s)</label><br><input id="p-freguesia" readonly></div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Dados do Voo / Equipamento</legend>
+      <div class="grelha">
+        <div class="campo"><label>Equipamento (VANT)</label><br><select id="p-equipamento"></select></div>
+        <div class="campo"><label>Data do Voo</label><br><input type="date" id="p-voo-data"></div>
+        <div class="campo"><label>Altura de Voo (m)</label><br><input type="number" step="0.1" id="p-voo-altura"></div>
+        <div class="campo"><label>GSD (cm)</label><br><input type="number" step="0.01" id="p-voo-gsd"></div>
+        <div class="campo"><label>Nº de Fotos</label><br><input type="number" id="p-voo-n-fotos"></div>
+        <div class="campo"><label>Área Cartografada (ha)</label><br><input type="number" step="0.01" id="p-area"></div>
+        <div class="campo"><label>Área de Voo (ha)</label><br><input type="number" step="0.01" id="p-voo-area"></div>
+        <div class="campo"><label>Data de Conclusão dos Trabalhos de Campo</label><br><input type="date" id="p-data-trabalhos-campo"></div>
+        <div class="campo"><label>Coordenador GEOLAYER</label><br><input id="p-coordenador"></div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Especificações (Formulário DGT)</legend>
+      <div class="grelha">
+        <div class="campo"><label>Finalidade</label><br><input id="p-finalidade"></div>
+        <div class="campo"><label>Tipo de Cartografia</label><br><input id="p-tipo-cartografia"></div>
+        <div class="campo"><label>Tipo de Produto</label><br><input id="p-tipo-produto"></div>
+        <div class="campo"><label>Temas Específicos</label><br><select id="p-temas-especificos"><option value="false">Não</option><option value="true">Sim</option></select></div>
+        <div class="campo"><label>Tipo de Levantamento</label><br><input id="p-tipo-levantamento" value="Fotogramétrico"></div>
+        <div class="campo"><label>Especificações Técnicas</label><br><input id="p-especificacoes-tecnicas"></div>
+        <div class="campo"><label>Versão das Especificações</label><br><input id="p-versao-especificacoes"></div>
+        <div class="campo"><label>Formato dos Dados</label><br><input id="p-formato-dados" value="PostgreSQL/PostGIS"></div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Processo DGT (correções)</legend>
+      <div class="grelha">
+        <div class="campo"><label>Nº de Processo DGT</label><br><input id="p-num-proc-dgt"></div>
+        <div class="campo"><label>Data do Relatório DGT</label><br><input type="date" id="p-data-relat-dgt"></div>
+        <div class="campo"><label>Data da Correção</label><br><input type="date" id="p-dgt-data-correcao"></div>
+      </div>
+      <div class="campo"><label>Erros não corrigidos (justificação)</label><br><textarea id="p-dgt-erros" style="width:100%" rows="2"></textarea></div>
+      <div class="campo"><label>Anexo 2 — Relatório de Voo (upload)</label><br><input type="file" id="p-anexo2"></div>
+      <div class="campo"><label>Anexo 3 — Autorização de Voo (upload)</label><br><input type="file" id="p-anexo3"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Gráfico de Execução (dias por fase)</legend>
+      <div class="grelha">
+        <div class="campo"><label>Planeamento</label><br><input type="number" id="p-t1"></div>
+        <div class="campo"><label>Voo</label><br><input type="number" id="p-t2"></div>
+        <div class="campo"><label>Processamento</label><br><input type="number" id="p-t3"></div>
+        <div class="campo"><label>PFs</label><br><input type="number" id="p-t4"></div>
+        <div class="campo"><label>Triangulação</label><br><input type="number" id="p-t5"></div>
+        <div class="campo"><label>Restituição</label><br><input type="number" id="p-t6"></div>
+        <div class="campo"><label>Edição Cartográfica</label><br><input type="number" id="p-t7"></div>
+        <div class="campo"><label>Completagem</label><br><input type="number" id="p-t8"></div>
+        <div class="campo"><label>Controlo de Qualidade</label><br><input type="number" id="p-t9"></div>
+      </div>
+    </fieldset>
+
+    <button class="primario" type="submit">Guardar Projeto</button>
+  </form>
+</div>
+
+<div class="painel" id="painel-documentos" style="display:none;">
+  <h3>Geração de Documentos</h3>
+  <div class="grelha">
+    <button onclick="gerarDocumento('RProducao')">Exportar Relatório de Produção (PDF)</button>
+    <button onclick="gerarDocumento('RelatorioPFs')">Exportar Relatório de PFs (PDF)</button>
+    <button onclick="gerarDocumento('TCompromisso')">Exportar Termo de Compromisso (PDF)</button>
+    <button onclick="gerarDocumento('CEncargos')">Exportar Caderno de Encargos (PDF)</button>
+    <button onclick="gerarDocumento('FormularioDGT')">Exportar Formulário DGT (PDF)</button>
+    <button onclick="gerarDocumento('MetadadosXML')">Exportar Metadados (XML)</button>
+    <button class="primario" onclick="gerarDossierCompleto()">Gerar Dossier Completo (tudo fundido)</button>
+  </div>
+  <p id="estado-geracao" style="color:var(--texto-suave);"></p>
+</div>
+
+<script src="../js/supabase-client.js"></script>
+<script src="../js/auth.js"></script>
+<script src="../js/tema.js"></script>
+<script src="../js/nav.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.9/pdfmake.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.9/vfs_fonts.js"></script>
+<script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+<script src="../js/gerador-pdf.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const projetoId = params.get('id');
+let mapa, camadaDesenhada, equipamentos = [];
+
+async function iniciar() {
+  const sessao = await exigirAdmin();
+  if (!sessao) return;
+  renderNavAdmin('projetos.html');
+  await carregarClientesSelect();
+  await carregarEquipamentosSelect();
+  iniciarMapa();
+  if (projetoId) {
+    document.getElementById('titulo-pagina').textContent = 'Editar Projeto';
+    document.getElementById('painel-documentos').style.display = 'block';
+    await carregarProjeto();
+  }
+}
+
+async function carregarClientesSelect() {
+  const { data } = await supabase.from('clientes').select('id, cliente_nome').order('cliente_nome');
+  document.getElementById('p-cliente').innerHTML = (data || []).map(c => `<option value="${c.id}">${c.cliente_nome}</option>`).join('');
+}
+
+async function carregarEquipamentosSelect() {
+  const { data } = await supabase.from('equipamentos').select('*').order('marca');
+  equipamentos = data || [];
+  document.getElementById('p-equipamento').innerHTML =
+    '<option value="">(usar o ativo por defeito)</option>' +
+    equipamentos.map(e => `<option value="${e.id}">${e.marca} ${e.modelo}</option>`).join('');
+}
+
+function iniciarMapa() {
+  mapa = L.map('mapa-projeto').setView([40.36, -8.44], 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapa);
+  const desenhados = new L.FeatureGroup().addTo(mapa);
+  const controloDesenho = new L.Control.Draw({
+    draw: { polygon: true, marker: true, polyline: false, circle: false, rectangle: true, circlemarker: false },
+    edit: { featureGroup: desenhados },
+  });
+  mapa.addControl(controloDesenho);
+  mapa.on(L.Draw.Event.CREATED, (e) => {
+    desenhados.clearLayers();
+    desenhados.addLayer(e.layer);
+    camadaDesenhada = e.layer;
+  });
+}
+
+async function carregarProjeto() {
+  const { data: p } = await supabase.from('projetos').select('*').eq('id', projetoId).single();
+  if (!p) return;
+  document.getElementById('projeto-id').value = p.id;
+  document.getElementById('p-cliente').value = p.cliente_id;
+  document.getElementById('p-titulo').value = p.titulo || '';
+  document.getElementById('p-cod-geolayer').value = p.cod_geolayer || '';
+  document.getElementById('p-estado').value = p.estado;
+  document.getElementById('p-data-abertura').value = p.data_abertura || '';
+  document.getElementById('p-data-prevista').value = p.data_prevista_conclusao || '';
+  document.getElementById('p-data-conclusao').value = p.data_conclusao || '';
+  document.getElementById('p-descricao').value = p.descricao || '';
+  document.getElementById('p-local').value = p.proj_local || '';
+  document.getElementById('p-sis-coordenadas').value = p.sis_coordenadas || 'EPSG:3763';
+  document.getElementById('p-distrito').value = (p.proj_distrito || []).join(', ');
+  document.getElementById('p-concelho').value = (p.proj_concelho || []).join(', ');
+  document.getElementById('p-freguesia').value = (p.proj_freguesia || []).join(', ');
+  document.getElementById('p-equipamento').value = p.equipamento_id || '';
+  document.getElementById('p-voo-data').value = p.voo_data || '';
+  document.getElementById('p-voo-altura').value = p.voo_altura || '';
+  document.getElementById('p-voo-gsd').value = p.voo_gsd || '';
+  document.getElementById('p-voo-n-fotos').value = p.voo_n_fotos || '';
+  document.getElementById('p-area').value = p.area || '';
+  document.getElementById('p-voo-area').value = p.voo_area || '';
+  document.getElementById('p-data-trabalhos-campo').value = p.data_trabalhos_campo || '';
+  document.getElementById('p-coordenador').value = p.coordenador_geolayer || '';
+  document.getElementById('p-finalidade').value = p.finalidade_produto || '';
+  document.getElementById('p-tipo-cartografia').value = p.tipo_cartografia || '';
+  document.getElementById('p-tipo-produto').value = p.tipo_produto || '';
+  document.getElementById('p-temas-especificos').value = String(!!p.temas_especificos);
+  document.getElementById('p-tipo-levantamento').value = p.tipo_levantamento || '';
+  document.getElementById('p-especificacoes-tecnicas').value = p.especificacoes_tecnicas || '';
+  document.getElementById('p-versao-especificacoes').value = p.versao_especificacoes || '';
+  document.getElementById('p-formato-dados').value = p.formato_dados || '';
+  document.getElementById('p-num-proc-dgt').value = p.num_proc_dgt || '';
+  document.getElementById('p-data-relat-dgt').value = p.data_relatorio_dgt || '';
+  document.getElementById('p-dgt-data-correcao').value = p.dgt_data_correcao || '';
+  document.getElementById('p-dgt-erros').value = p.dgt_erros_nao_corrigidos || '';
+  ['t1','t2','t3','t4','t5','t6','t7','t8','t9'].forEach((k, i) => {
+    const campos = ['temp_dias_planeamento','temp_dias_voo','temp_dias_processamento','temp_dias_pfs',
+      'temp_dias_triangulacao','temp_dias_restituicao','temp_dias_edicao_cartografica','temp_dias_completagem','temp_dias_controlo_qualidade'];
+    document.getElementById('p-' + k).value = p[campos[i]] || '';
+  });
+
+  const { data: geojsonTexto } = await supabase.rpc('obter_geom_projeto_geojson', { id_projeto: p.id });
+  if (geojsonTexto) {
+    const camada = L.geoJSON(JSON.parse(geojsonTexto)).addTo(mapa);
+    camadaDesenhada = camada.getLayers()[0];
+    mapa.fitBounds(camada.getBounds());
+  }
+}
+
+async function guardarProjeto(e) {
+  e.preventDefault();
+  const payload = {
+    cliente_id: document.getElementById('p-cliente').value,
+    titulo: document.getElementById('p-titulo').value,
+    cod_geolayer: document.getElementById('p-cod-geolayer').value,
+    estado: document.getElementById('p-estado').value,
+    data_abertura: document.getElementById('p-data-abertura').value || null,
+    data_prevista_conclusao: document.getElementById('p-data-prevista').value || null,
+    data_conclusao: document.getElementById('p-data-conclusao').value || null,
+    descricao: document.getElementById('p-descricao').value,
+    proj_local: document.getElementById('p-local').value,
+    sis_coordenadas: document.getElementById('p-sis-coordenadas').value,
+    equipamento_id: document.getElementById('p-equipamento').value || null,
+    voo_data: document.getElementById('p-voo-data').value || null,
+    voo_altura: document.getElementById('p-voo-altura').value || null,
+    voo_gsd: document.getElementById('p-voo-gsd').value || null,
+    voo_n_fotos: document.getElementById('p-voo-n-fotos').value || null,
+    area: document.getElementById('p-area').value || null,
+    voo_area: document.getElementById('p-voo-area').value || null,
+    data_trabalhos_campo: document.getElementById('p-data-trabalhos-campo').value || null,
+    coordenador_geolayer: document.getElementById('p-coordenador').value,
+    finalidade_produto: document.getElementById('p-finalidade').value,
+    tipo_cartografia: document.getElementById('p-tipo-cartografia').value,
+    tipo_produto: document.getElementById('p-tipo-produto').value,
+    temas_especificos: document.getElementById('p-temas-especificos').value === 'true',
+    tipo_levantamento: document.getElementById('p-tipo-levantamento').value,
+    especificacoes_tecnicas: document.getElementById('p-especificacoes-tecnicas').value,
+    versao_especificacoes: document.getElementById('p-versao-especificacoes').value,
+    formato_dados: document.getElementById('p-formato-dados').value,
+    num_proc_dgt: document.getElementById('p-num-proc-dgt').value,
+    data_relatorio_dgt: document.getElementById('p-data-relat-dgt').value || null,
+    dgt_data_correcao: document.getElementById('p-dgt-data-correcao').value || null,
+    dgt_erros_nao_corrigidos: document.getElementById('p-dgt-erros').value,
+    temp_dias_planeamento: document.getElementById('p-t1').value || null,
+    temp_dias_voo: document.getElementById('p-t2').value || null,
+    temp_dias_processamento: document.getElementById('p-t3').value || null,
+    temp_dias_pfs: document.getElementById('p-t4').value || null,
+    temp_dias_triangulacao: document.getElementById('p-t5').value || null,
+    temp_dias_restituicao: document.getElementById('p-t6').value || null,
+    temp_dias_edicao_cartografica: document.getElementById('p-t7').value || null,
+    temp_dias_completagem: document.getElementById('p-t8').value || null,
+    temp_dias_controlo_qualidade: document.getElementById('p-t9').value || null,
+  };
+  let idFinal = projetoId;
+  if (projetoId) {
+    await supabase.from('projetos').update(payload).eq('id', projetoId);
+  } else {
+    const { data, error } = await supabase.from('projetos').insert(payload).select().single();
+    if (error) { alert('Erro: ' + error.message); return; }
+    idFinal = data.id;
+  }
+  if (camadaDesenhada && camadaDesenhada.toGeoJSON) {
+    await supabase.rpc('guardar_geom_projeto', {
+      id_projeto: idFinal,
+      geojson: JSON.stringify(camadaDesenhada.toGeoJSON().geometry),
+    });
+  }
+  if (projetoId) { alert('Projeto atualizado.'); }
+  else { window.location.href = 'projeto-detalhe.html?id=' + idFinal; }
+}
+
+async function gerarDocumento(tipo) {
+  document.getElementById('estado-geracao').textContent = 'A gerar ' + tipo + '...';
+  const bytes = await gerarPdfDocumento(tipo, projetoId);
+  const extensao = tipo === 'MetadadosXML' ? '.xml' : '.pdf';
+  descarregarPdf(bytes, tipo + extensao);
+  document.getElementById('estado-geracao').textContent = tipo + ' gerado.';
+}
+
+async function gerarDossierCompleto() {
+  document.getElementById('estado-geracao').textContent = 'A gerar dossier completo...';
+  const pdfFinal = await gerarDossierCompletoPdf(projetoId);
+  descarregarPdf(pdfFinal, 'Dossier_Completo.pdf');
+  document.getElementById('estado-geracao').textContent = 'Dossier completo gerado.';
+}
+
+iniciar();
+</script>
+</body>
+</html>

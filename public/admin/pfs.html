@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="pt" data-tema="claro">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PFs — GeoTrack</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="topo" id="topo"></div>
+
+<div class="painel">
+  <h2>Pontos Fotogramétricos (PFs)</h2>
+  <div class="campo"><label>Projeto</label><br><select id="filtro-projeto" onchange="carregarPfs()" style="width:100%"></select></div>
+  <button class="primario" onclick="abrirFormulario()">+ Novo PF</button>
+  <table style="margin-top:10px;">
+    <thead><tr><th>PF Nº</th><th>Data</th><th>Hora</th><th>M / P / Z</th><th>Observações</th><th></th></tr></thead>
+    <tbody id="tabela-pfs"></tbody>
+  </table>
+</div>
+
+<div class="painel" id="painel-form" style="display:none;">
+  <h3 id="titulo-form">Novo PF</h3>
+  <form onsubmit="guardarPf(event)">
+    <input type="hidden" id="pf-id">
+    <div class="grelha">
+      <div class="campo"><label>PF Nº*</label><br><input type="number" id="pf-num" required></div>
+      <div class="campo"><label>Data de Observação</label><br><input type="date" id="pf-data"></div>
+      <div class="campo"><label>Latitude</label><br><input type="number" step="0.000001" id="pf-lat" placeholder="40.3650"></div>
+      <div class="campo"><label>Longitude</label><br><input type="number" step="0.000001" id="pf-lon" placeholder="-8.4350"></div>
+      <div class="campo"><label>Altura da Antena (m)</label><br><input type="number" step="0.01" id="pf-altura-antena"></div>
+      <div class="campo"><label>M</label><br><input type="number" step="0.001" id="pf-m"></div>
+      <div class="campo"><label>P</label><br><input type="number" step="0.001" id="pf-p"></div>
+      <div class="campo"><label>Z (PF)</label><br><input type="number" step="0.001" id="pf-z"></div>
+      <div class="campo"><label>Z (PF solo)</label><br><input type="number" step="0.001" id="pf-z-solo"></div>
+    </div>
+    <div class="campo">
+      <label>Observações</label><br>
+      <select id="pf-observacoes-select" onchange="document.getElementById('pf-observacoes').value=this.value">
+        <option value="">— escolher texto padrão —</option>
+      </select>
+      <textarea id="pf-observacoes" style="width:100%" rows="2"></textarea>
+    </div>
+    <div class="campo"><label>Foto (nome = número do PF)</label><br><input type="file" id="pf-foto" accept="image/*"></div>
+    <button class="primario" type="submit">Guardar</button>
+    <button type="button" onclick="document.getElementById('painel-form').style.display='none'">Cancelar</button>
+  </form>
+  <p style="font-size:12px;color:var(--texto-suave);">
+    Hora de início/fim, sistema de coordenadas, máscara, taxa de observação, estação de
+    referência e técnico responsável vêm automaticamente das Configurações / do projeto
+    e não precisam de ser repetidos aqui PF a PF (ajusta-se em Configurações se for preciso
+    mudar o valor para todo o projeto).
+  </p>
+</div>
+
+<script src="../js/supabase-client.js"></script>
+<script src="../js/auth.js"></script>
+<script src="../js/tema.js"></script>
+<script src="../js/nav.js"></script>
+<script>
+let pfs = [], projetoAtual = null;
+
+async function iniciar() {
+  const sessao = await exigirAdmin();
+  if (!sessao) return;
+  renderNavAdmin('pfs.html');
+  const { data: projetos } = await supabase.from('projetos').select('id, titulo').order('titulo');
+  document.getElementById('filtro-projeto').innerHTML = (projetos || []).map(p => `<option value="${p.id}">${p.titulo}</option>`).join('');
+  await carregarTextosObservacao();
+  await carregarPfs();
+}
+
+async function carregarTextosObservacao() {
+  const { data } = await supabase.from('configuracoes').select('valor').like('chave', 'pf_obs_padrao_%');
+  const sel = document.getElementById('pf-observacoes-select');
+  (data || []).forEach(c => sel.innerHTML += `<option value="${c.valor}">${c.valor}</option>`);
+}
+
+async function carregarPfs() {
+  projetoAtual = document.getElementById('filtro-projeto').value;
+  if (!projetoAtual) return;
+  const { data } = await supabase.from('pfs').select('*').eq('projeto_id', projetoAtual).order('pf_num');
+  pfs = data || [];
+  document.getElementById('tabela-pfs').innerHTML = pfs.map(p => `
+    <tr>
+      <td>${p.pf_num}</td>
+      <td>${p.data_observacao || '-'}</td>
+      <td>${p.hora_inicio || '-'} – ${p.hora_fim || '-'}</td>
+      <td>${p.coord_m ?? '-'} / ${p.coord_p ?? '-'} / ${p.coord_z_pf ?? '-'}</td>
+      <td>${(p.observacoes || '').slice(0, 40)}</td>
+      <td><button onclick="editarPf('${p.id}')">Editar</button> <button onclick="eliminarPf('${p.id}')">Eliminar</button></td>
+    </tr>
+  `).join('');
+}
+
+function proximaHoraDisponivel() {
+  // Algoritmo simplificado: 10 min por PF a partir das 09:00, salta 13:00-14:00,
+  // e ao chegar às 18:00 passa para o próximo dia útil (não domingo) às 09:00.
+  if (!pfs.length) return { inicio: '09:00', fim: '09:10' };
+  const ultimo = pfs[pfs.length - 1];
+  let [h, m] = (ultimo.hora_fim || '09:00').split(':').map(Number);
+  m += 10;
+  if (m >= 60) { h += 1; m -= 60; }
+  if (h === 13) { h = 14; m = 0; } // salta hora de almoço
+  if (h >= 18) { h = 9; m = 0; }   // dia seguinte (ajuste fino: verificar domingo e 10 min de tolerância na ronda de testes)
+  const inicio = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  let m2 = m + 10, h2 = h;
+  if (m2 >= 60) { h2 += 1; m2 -= 60; }
+  const fim = `${String(h2).padStart(2,'0')}:${String(m2).padStart(2,'0')}`;
+  return { inicio, fim };
+}
+
+function abrirFormulario() {
+  document.getElementById('pf-id').value = '';
+  document.getElementById('titulo-form').textContent = 'Novo PF';
+  ['pf-num','pf-data','pf-lat','pf-lon','pf-altura-antena','pf-m','pf-p','pf-z','pf-z-solo','pf-observacoes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('pf-num').value = (pfs.length ? Math.max(...pfs.map(p => p.pf_num)) : 0) + 1;
+  document.getElementById('painel-form').style.display = 'block';
+}
+
+function editarPf(id) {
+  const p = pfs.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('pf-id').value = p.id;
+  document.getElementById('titulo-form').textContent = 'Editar PF';
+  document.getElementById('pf-num').value = p.pf_num;
+  document.getElementById('pf-data').value = p.data_observacao || '';
+  document.getElementById('pf-altura-antena').value = p.altura_antena || '';
+  document.getElementById('pf-m').value = p.coord_m || '';
+  document.getElementById('pf-p').value = p.coord_p || '';
+  document.getElementById('pf-z').value = p.coord_z_pf || '';
+  document.getElementById('pf-z-solo').value = p.coord_z_pfsolo || '';
+  document.getElementById('pf-observacoes').value = p.observacoes || '';
+  document.getElementById('painel-form').style.display = 'block';
+}
+
+async function guardarPf(e) {
+  e.preventDefault();
+  const id = document.getElementById('pf-id').value;
+  const horas = id ? {} : proximaHoraDisponivel();
+  const payload = {
+    projeto_id: projetoAtual,
+    pf_num: Number(document.getElementById('pf-num').value),
+    data_observacao: document.getElementById('pf-data').value || null,
+    altura_antena: document.getElementById('pf-altura-antena').value || null,
+    coord_m: document.getElementById('pf-m').value || null,
+    coord_p: document.getElementById('pf-p').value || null,
+    coord_z_pf: document.getElementById('pf-z').value || null,
+    coord_z_pfsolo: document.getElementById('pf-z-solo').value || null,
+    observacoes: document.getElementById('pf-observacoes').value,
+    ...horas,
+  };
+  const lat = document.getElementById('pf-lat').value, lon = document.getElementById('pf-lon').value;
+  if (lat && lon) payload.geom = `SRID=4326;POINT(${lon} ${lat})`;
+
+  if (id) {
+    await supabase.from('pfs').update(payload).eq('id', id);
+  } else {
+    if (!payload.geom) { alert('Indica a latitude/longitude do PF (normalmente vem do mapa).'); return; }
+    await supabase.from('pfs').insert(payload);
+  }
+  document.getElementById('painel-form').style.display = 'none';
+  await carregarPfs();
+}
+
+async function eliminarPf(id) {
+  if (!confirm('Eliminar este PF?')) return;
+  await supabase.from('pfs').delete().eq('id', id);
+  await carregarPfs();
+}
+
+iniciar();
+</script>
+</body>
+</html>

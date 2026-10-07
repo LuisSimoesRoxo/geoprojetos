@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="pt" data-tema="claro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GeoTrack SIG — GEOLAYER</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div style="max-width:480px;margin:60px auto;padding:0 16px;">
+  <h1 style="text-align:center;">GeoTrack SIG</h1>
+  <p style="text-align:center;color:var(--texto-suave);">
+    Sistema de gestão de projetos de cartografia e fotogrametria da GEOLAYER —
+    acompanhe os seus projetos, consulte relatórios e fale connosco.
+  </p>
+
+  <div class="painel" id="escolha">
+    <div style="display:flex; gap:12px;">
+      <button class="primario" style="flex:1" onclick="mostrarLogin('cliente')">Sou Cliente</button>
+      <button class="primario" style="flex:1" onclick="mostrarLogin('admin')">Sou Administração</button>
+    </div>
+  </div>
+
+  <div class="painel" id="form-login" style="display:none;">
+    <h3 id="titulo-login"></h3>
+    <form onsubmit="submeterLogin(event)">
+      <p><input type="email" id="email" placeholder="Email" required style="width:100%"></p>
+      <p><input type="password" id="password" placeholder="Password" required style="width:100%"></p>
+      <p id="erro-login" style="color:var(--alerta); display:none;"></p>
+      <button class="primario" type="submit" style="width:100%">Entrar</button>
+    </form>
+    <p id="link-primeiro-acesso" style="display:none; text-align:center; margin-top:10px;">
+      <a href="#" onclick="mostrarPrimeiroAcesso(event)">Primeiro acesso / tenho um código de ativação</a>
+    </p>
+  </div>
+
+  <div class="painel" id="form-ativacao" style="display:none;">
+    <h3>Primeiro acesso</h3>
+    <form onsubmit="submeterAtivacao(event)">
+      <p><input type="email" id="ativ-email" placeholder="Email" required style="width:100%"></p>
+      <p><input type="text" id="ativ-codigo" placeholder="Código de ativação" required style="width:100%"></p>
+      <p><input type="password" id="ativ-password" placeholder="Nova password" required style="width:100%"></p>
+      <p id="erro-ativacao" style="color:var(--alerta); display:none;"></p>
+      <button class="primario" type="submit" style="width:100%">Definir password e entrar</button>
+    </form>
+  </div>
+</div>
+
+<script src="js/supabase-client.js"></script>
+<script src="js/auth.js"></script>
+<script>
+let tipoEscolhido = 'cliente';
+
+function mostrarLogin(tipo) {
+  tipoEscolhido = tipo;
+  document.getElementById('titulo-login').textContent = tipo === 'admin' ? 'Acesso à Administração' : 'Acesso de Cliente';
+  document.getElementById('form-login').style.display = 'block';
+  document.getElementById('link-primeiro-acesso').style.display = tipo === 'cliente' ? 'block' : 'none';
+  document.getElementById('escolha').style.display = 'none';
+}
+
+function mostrarPrimeiroAcesso(e) {
+  e.preventDefault();
+  document.getElementById('form-login').style.display = 'none';
+  document.getElementById('form-ativacao').style.display = 'block';
+}
+
+async function submeterLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const erro = document.getElementById('erro-login');
+  erro.style.display = 'none';
+  try {
+    await iniciarSessao(email, password);
+    window.location.href = tipoEscolhido === 'admin' ? 'admin/dashboard.html' : 'cliente/portal.html';
+  } catch (err) {
+    erro.textContent = 'Email ou password incorretos.';
+    erro.style.display = 'block';
+  }
+}
+
+// Nota de implementação: a troca da password temporária pela definitiva,
+// validando o código de ativação, deve correr numa Edge Function própria
+// (confirmar-ativacao) que verifica codigo_ativacao na tabela clientes e usa
+// a Service Role Key para chamar supabase.auth.admin.updateUserById.
+// Aqui fica o esqueleto do pedido a essa função:
+async function submeterAtivacao(e) {
+  e.preventDefault();
+  const email = document.getElementById('ativ-email').value;
+  const codigo = document.getElementById('ativ-codigo').value;
+  const password = document.getElementById('ativ-password').value;
+  const erro = document.getElementById('erro-ativacao');
+  erro.style.display = 'none';
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/confirmar-ativacao`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY },
+      body: JSON.stringify({ email, codigo, password }),
+    });
+    const resultado = await resp.json();
+    if (!resp.ok) throw new Error(resultado.error || 'Código inválido');
+    await iniciarSessao(email, password);
+    window.location.href = 'cliente/portal.html';
+  } catch (err) {
+    erro.textContent = err.message;
+    erro.style.display = 'block';
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="pt" data-tema="claro">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Histórico — GeoTrack</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="topo" id="topo"></div>
+
+<div class="painel">
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <h2>Histórico / Auditoria</h2>
+    <div>
+      <button onclick="exportarCsv()">Exportar CSV</button>
+      <button onclick="limparTudo()" style="color:var(--alerta);">Limpar todos os registos</button>
+    </div>
+  </div>
+  <div class="grelha" style="margin-bottom:10px;">
+    <select id="filtro-projeto"><option value="">Todos os projetos</option></select>
+    <select id="filtro-cliente"><option value="">Todos os clientes</option></select>
+    <select id="filtro-tipo">
+      <option value="">Todos os tipos</option>
+      <option value="acesso">Acesso</option>
+      <option value="alerta">Alerta</option>
+      <option value="nota_cliente">Nota de Cliente</option>
+      <option value="lembrete">Lembrete</option>
+      <option value="sistema">Sistema</option>
+    </select>
+    <input type="number" id="filtro-dias" placeholder="Últimos X dias" value="30" style="width:140px;">
+    <button class="primario" onclick="carregarHistorico()">Filtrar</button>
+  </div>
+  <table>
+    <thead><tr><th>Data</th><th>Tipo</th><th>Origem</th><th>Utilizador</th><th>Mensagem</th><th>Estado</th><th></th></tr></thead>
+    <tbody id="tabela-historico"></tbody>
+  </table>
+</div>
+
+<script src="../js/supabase-client.js"></script>
+<script src="../js/auth.js"></script>
+<script src="../js/tema.js"></script>
+<script src="../js/nav.js"></script>
+<script>
+let registosAtuais = [];
+
+async function iniciar() {
+  const sessao = await exigirAdmin();
+  if (!sessao) return;
+  renderNavAdmin('historico.html');
+  const { data: projetos } = await supabase.from('projetos').select('id, titulo').order('titulo');
+  document.getElementById('filtro-projeto').innerHTML += (projetos || []).map(p => `<option value="${p.id}">${p.titulo}</option>`).join('');
+  const { data: clientes } = await supabase.from('clientes').select('id, cliente_nome').order('cliente_nome');
+  document.getElementById('filtro-cliente').innerHTML += (clientes || []).map(c => `<option value="${c.id}">${c.cliente_nome}</option>`).join('');
+  await carregarHistorico();
+}
+
+async function carregarHistorico() {
+  let query = supabase.from('historico').select('*').order('data_criacao', { ascending: false }).limit(500);
+  const projeto = document.getElementById('filtro-projeto').value;
+  const cliente = document.getElementById('filtro-cliente').value;
+  const tipo = document.getElementById('filtro-tipo').value;
+  const dias = Number(document.getElementById('filtro-dias').value || 30);
+  if (projeto) query = query.eq('projeto_id', projeto);
+  if (cliente) query = query.eq('cliente_id', cliente);
+  if (tipo) query = query.eq('tipo', tipo);
+  if (dias) query = query.gte('data_criacao', new Date(Date.now() - dias * 86400000).toISOString());
+
+  const { data } = await query;
+  registosAtuais = data || [];
+  document.getElementById('tabela-historico').innerHTML = registosAtuais.map(r => `
+    <tr>
+      <td>${new Date(r.data_criacao).toLocaleString('pt-PT')}</td>
+      <td>${r.tipo}</td>
+      <td>${r.origem}</td>
+      <td>${r.utilizador || '-'}</td>
+      <td>${r.mensagem || '-'}</td>
+      <td>${r.estado}</td>
+      <td>${r.estado !== 'lido' ? `<button onclick="marcarLido('${r.id}')">Marcar como lido</button>` : ''}</td>
+    </tr>
+  `).join('');
+}
+
+async function marcarLido(id) {
+  await supabase.from('historico').update({ estado: 'lido' }).eq('id', id);
+  await carregarHistorico();
+}
+
+async function limparTudo() {
+  if (!confirm('Isto elimina TODOS os registos de histórico. Continuar?')) return;
+  await supabase.from('historico').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+  await carregarHistorico();
+}
+
+function exportarCsv() {
+  const linhas = [['Data','Tipo','Origem','Utilizador','Mensagem','Estado']];
+  registosAtuais.forEach(r => linhas.push([r.data_criacao, r.tipo, r.origem, r.utilizador, r.mensagem, r.estado]));
+  const csv = linhas.map(l => l.map(v => `"${(v ?? '').toString().replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'historico.csv';
+  a.click();
+}
+
+iniciar();
+</script>
+</body>
+</html>

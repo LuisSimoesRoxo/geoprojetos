@@ -1,0 +1,105 @@
+:root[data-tema="claro"] {
+  --bg: #f5f6f8;
+  --bg-painel: #ffffff;
+  --texto: #1a1d21;
+  --texto-suave: #5b6472;
+  --borda: #dde1e6;
+  --primaria: #1f6f54;
+  --primaria-hover: #185a44;
+  --alerta: #c0392b;
+  --sucesso: #1f6f54;
+  --aviso: #b8860b;
+}
+:root[data-tema="escuro"] {
+  --bg: #15181c;
+  --bg-painel: #1d2127;
+  --texto: #e7eaee;
+  --texto-suave: #9aa3af;
+  --borda: #2c323a;
+  --primaria: #3fae85;
+  --primaria-hover: #4fc996;
+  --alerta: #e0564a;
+  --sucesso: #3fae85;
+  --aviso: #d6a23a;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--texto);
+}
+
+.topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: var(--bg-painel);
+  border-bottom: 1px solid var(--borda);
+}
+.topo nav a {
+  color: var(--texto-suave);
+  text-decoration: none;
+  margin-right: 16px;
+  font-size: 14px;
+}
+.topo nav a.ativo, .topo nav a:hover { color: var(--primaria); }
+
+#btn-tema {
+  background: none;
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.painel {
+  background: var(--bg-painel);
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px;
+}
+
+.grelha { display: flex; gap: 16px; flex-wrap: wrap; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--borda); }
+th { color: var(--texto-suave); font-weight: 600; }
+
+input, select, textarea, button {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 7px 10px;
+  border: 1px solid var(--borda);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--texto);
+}
+
+button.primario {
+  background: var(--primaria);
+  border-color: var(--primaria);
+  color: white;
+  cursor: pointer;
+}
+button.primario:hover { background: var(--primaria-hover); }
+
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+.tag-aberto { background: #3b82f6; color: white; }
+.tag-em_curso { background: var(--aviso); color: white; }
+.tag-concluido { background: var(--sucesso); color: white; }
+.tag-atrasado { background: var(--alerta); color: white; }
+.tag-cancelado { background: var(--texto-suave); color: white; }
+
+.separadores { display: flex; gap: 4px; border-bottom: 1px solid var(--borda); margin: 16px; }
+.separadores button {
+  border: none; border-bottom: 2px solid transparent; border-radius: 0;
+  background: none; padding: 10px 14px; color: var(--texto-suave); cursor: pointer;
+}
+.separadores button.ativo { color: var(--primaria); border-bottom-color: var(--primaria); }
+
+#mapa { height: 70vh; border-radius: 8px; }

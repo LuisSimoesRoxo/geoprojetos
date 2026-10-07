@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="pt" data-tema="claro">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clientes — GeoTrack</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="topo" id="topo"></div>
+
+<div class="painel">
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <h2>Clientes</h2>
+    <button class="primario" onclick="abrirFormulario()">+ Novo Cliente</button>
+  </div>
+  <table>
+    <thead><tr><th>Nome</th><th>Email</th><th>Nível</th><th>Projetos</th><th>Ativo</th><th></th></tr></thead>
+    <tbody id="tabela-clientes"></tbody>
+  </table>
+</div>
+
+<div class="painel" id="painel-form" style="display:none;">
+  <h3 id="titulo-form">Novo Cliente</h3>
+  <form onsubmit="guardarCliente(event)">
+    <input type="hidden" id="cliente-id">
+    <p><label>Nome*</label><br><input id="c-nome" required style="width:100%"></p>
+    <p><label>Email</label><br><input id="c-email" type="email" style="width:100%"></p>
+    <p><label>Telefone</label><br><input id="c-telefone" style="width:100%"></p>
+    <p><label>NIF</label><br><input id="c-nif" style="width:100%"></p>
+    <p><label>Morada</label><br><input id="c-morada" style="width:100%"></p>
+    <p><label>Código Postal / Localidade</label><br><input id="c-cod-postal" placeholder="0000-000 Localidade" style="width:100%"></p>
+    <p><label>Nível de Visualização</label><br>
+      <select id="c-nivel" style="width:100%">
+        <option value="simples">Simples</option>
+        <option value="medio" selected>Médio</option>
+        <option value="avancado">Avançado</option>
+      </select>
+    </p>
+    <p><label><input type="checkbox" id="c-ativo" checked> Ativo</label></p>
+    <button class="primario" type="submit">Guardar</button>
+    <button type="button" onclick="fecharFormulario()">Cancelar</button>
+  </form>
+  <div id="bloco-login" style="margin-top:14px; border-top:1px solid var(--borda); padding-top:14px; display:none;">
+    <button type="button" onclick="criarLoginCliente()">Criar acesso de login para este cliente</button>
+  </div>
+</div>
+
+<script src="../js/supabase-client.js"></script>
+<script src="../js/auth.js"></script>
+<script src="../js/tema.js"></script>
+<script src="../js/nav.js"></script>
+<script>
+let clientes = [];
+let clienteEmEdicaoId = null;
+
+async function iniciar() {
+  const sessao = await exigirAdmin();
+  if (!sessao) return;
+  renderNavAdmin('clientes.html');
+  await carregarClientes();
+}
+
+async function carregarClientes() {
+  const { data: lista } = await supabase.from('clientes').select('*').order('cliente_nome');
+  const { data: projetos } = await supabase.from('projetos').select('id, cliente_id');
+  clientes = lista || [];
+  const contagem = {};
+  (projetos || []).forEach(p => contagem[p.cliente_id] = (contagem[p.cliente_id] || 0) + 1);
+
+  document.getElementById('tabela-clientes').innerHTML = clientes.map(c => `
+    <tr>
+      <td>${c.cliente_nome}</td>
+      <td>${c.cliente_email || '-'}</td>
+      <td>${c.nivel_visualizacao}</td>
+      <td>${contagem[c.id] || 0}</td>
+      <td>${c.ativo ? 'Sim' : 'Não'}</td>
+      <td>
+        <button onclick="editarCliente('${c.id}')">Editar</button>
+        <button onclick="eliminarCliente('${c.id}', ${contagem[c.id] || 0})">Eliminar</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function abrirFormulario() {
+  clienteEmEdicaoId = null;
+  document.getElementById('titulo-form').textContent = 'Novo Cliente';
+  document.getElementById('cliente-id').value = '';
+  ['c-nome','c-email','c-telefone','c-nif','c-morada','c-cod-postal'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('c-nivel').value = 'medio';
+  document.getElementById('c-ativo').checked = true;
+  document.getElementById('bloco-login').style.display = 'none';
+  document.getElementById('painel-form').style.display = 'block';
+}
+
+function editarCliente(id) {
+  const c = clientes.find(x => x.id === id);
+  if (!c) return;
+  clienteEmEdicaoId = id;
+  document.getElementById('titulo-form').textContent = 'Editar Cliente';
+  document.getElementById('cliente-id').value = id;
+  document.getElementById('c-nome').value = c.cliente_nome || '';
+  document.getElementById('c-email').value = c.cliente_email || '';
+  document.getElementById('c-telefone').value = c.cliente_telefone || '';
+  document.getElementById('c-nif').value = c.cliente_nif || '';
+  document.getElementById('c-morada').value = c.cliente_morada || '';
+  document.getElementById('c-cod-postal').value = c.cliente_cod_postal || '';
+  document.getElementById('c-nivel').value = c.nivel_visualizacao;
+  document.getElementById('c-ativo').checked = c.ativo;
+  document.getElementById('bloco-login').style.display = c.auth_user_id ? 'none' : 'block';
+  document.getElementById('painel-form').style.display = 'block';
+}
+
+function fecharFormulario() { document.getElementById('painel-form').style.display = 'none'; }
+
+async function guardarCliente(e) {
+  e.preventDefault();
+  const payload = {
+    cliente_nome: document.getElementById('c-nome').value,
+    cliente_email: document.getElementById('c-email').value,
+    cliente_telefone: document.getElementById('c-telefone').value,
+    cliente_nif: document.getElementById('c-nif').value,
+    cliente_morada: document.getElementById('c-morada').value,
+    cliente_cod_postal: document.getElementById('c-cod-postal').value,
+    nivel_visualizacao: document.getElementById('c-nivel').value,
+    ativo: document.getElementById('c-ativo').checked,
+  };
+  if (clienteEmEdicaoId) {
+    await supabase.from('clientes').update(payload).eq('id', clienteEmEdicaoId);
+  } else {
+    await supabase.from('clientes').insert(payload);
+  }
+  fecharFormulario();
+  await carregarClientes();
+}
+
+async function eliminarCliente(id, numProjetos) {
+  if (numProjetos > 0) {
+    alert('Não é possível eliminar: este cliente tem ' + numProjetos + ' projeto(s) associado(s).');
+    return;
+  }
+  if (!confirm('Eliminar este cliente?')) return;
+  await supabase.from('clientes').delete().eq('id', id);
+  await carregarClientes();
+}
+
+async function criarLoginCliente() {
+  const email = document.getElementById('c-email').value;
+  if (!email) { alert('Preenche o email primeiro.'); return; }
+  const { data: sessao } = await supabase.auth.getSession();
+  const resp = await fetch(`${SUPABASE_URL}/functions/v1/create-client-user`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${sessao.session.access_token}`,
+    },
+    body: JSON.stringify({ cliente_id: clienteEmEdicaoId, email }),
+  });
+  const resultado = await resp.json();
+  if (!resp.ok) { alert('Erro: ' + resultado.error); return; }
+  alert('Login criado e código de ativação enviado por email.');
+  await carregarClientes();
+}
+
+iniciar();
+</script>
+</body>
+</html>

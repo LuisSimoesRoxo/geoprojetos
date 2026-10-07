@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="pt" data-tema="claro">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mapa — GeoTrack</title>
+<link rel="stylesheet" href="../css/style.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>#envolvente{display:flex; gap:12px; margin:16px;} #mapa{flex:1; height:75vh;} #painel-lateral{width:340px;}</style>
+</head>
+<body>
+<div class="topo" id="topo"></div>
+
+<div class="painel" style="margin-bottom:0;">
+  <div class="grelha">
+    <select id="filtro-cliente" onchange="aoFiltrarCliente()"><option value="">Todos os clientes</option></select>
+    <select id="filtro-projeto" onchange="aplicarFiltros()"><option value="">Todos os projetos</option></select>
+    <select id="filtro-estado" onchange="aplicarFiltros()">
+      <option value="">Todos os estados</option>
+      <option value="aberto">Aberto</option><option value="em_curso">Em curso</option>
+      <option value="concluido">Concluído</option><option value="atrasado">Atrasado</option>
+      <option value="cancelado">Cancelado</option>
+    </select>
+    <div style="position:relative;">
+      <input id="busca" placeholder="Procurar cliente, código, processo DGT, título..." style="width:320px" oninput="procurar()">
+      <div id="sugestoes" style="position:absolute; background:var(--bg-painel); border:1px solid var(--borda); width:320px; z-index:10;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="envolvente">
+  <div id="mapa"></div>
+  <div class="painel" id="painel-lateral">
+    <p style="color:var(--texto-suave)">Clica num projeto no mapa para ver os detalhes.</p>
+  </div>
+</div>
+
+<script src="../js/supabase-client.js"></script>
+<script src="../js/auth.js"></script>
+<script src="../js/tema.js"></script>
+<script src="../js/nav.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.geometryutil/0.10.3/leaflet.geometryutil.min.js"></script>
+<script>
+let mapa, camadaProjetos, todosProjetos = [], todosClientes = [];
+
+const CORES_ESTADO = { aberto:'#3b82f6', em_curso:'#b8860b', concluido:'#1f6f54', atrasado:'#c0392b', cancelado:'#888' };
+
+async function iniciar() {
+  const sessao = await exigirAdmin();
+  if (!sessao) return;
+  renderNavAdmin('mapa.html');
+  iniciarMapa();
+  await carregarClientes();
+  await carregarProjetosEMostrar();
+}
+
+function iniciarMapa() {
+  mapa = L.map('mapa').setView([39.6, -8.0], 7);
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OpenStreetMap' });
+  const esri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { attribution: 'Esri' });
+  osm.addTo(mapa);
+  L.control.layers({ 'OpenStreetMap': osm, 'ESRI World Imagery': esri }).addTo(mapa);
+
+  const desenhados = new L.FeatureGroup().addTo(mapa);
+  mapa.addControl(new L.Control.Draw({
+    draw: { polygon: true, polyline: true, marker: false, circle: false, rectangle: false, circlemarker: false },
+    edit: { featureGroup: desenhados },
+  }));
+  mapa.on(L.Draw.Event.CREATED, (e) => {
+    desenhados.addLayer(e.layer);
+    let medida = '';
+    if (e.layerType === 'polyline') {
+      medida = 'Distância: ' + (L.GeometryUtil.length(e.layer) / 1000).toFixed(3) + ' km';
+    } else if (e.layerType === 'polygon') {
+      medida = 'Área: ' + (L.GeometryUtil.geodesicArea(e.layer.getLatLngs()[0]) / 10000).toFixed(3) + ' ha';
+    }
+    if (medida) e.layer.bindPopup(medida).openPopup();
+  });
+
+  camadaProjetos = L.layerGroup().addTo(mapa);
+}
+
+async function carregarClientes() {
+  const { data } = await supabase.from('clientes').select('id, cliente_nome').order('cliente_nome');
+  todosClientes = data || [];
+  document.getElementById('filtro-cliente').innerHTML += todosClientes.map(c => `<option value="${c.id}">${c.cliente_nome}</option>`).join('');
+}
+
+async function aoFiltrarCliente() {
+  const clienteId = document.getElementById('filtro-cliente').value;
+  const selProjeto = document.getElementById('filtro-projeto');
+  selProjeto.innerHTML = '<option value="">Todos os projetos</option>';
+  if (clienteId) {
+    const { data } = await supabase.from('projetos').select('id, titulo').eq('cliente_id', clienteId);
+    (data || []).forEach(p => selProjeto.innerHTML += `<option value="${p.id}">${p.titulo}</option>`);
+  }
+  aplicarFiltros();
+}
+
+async function carregarProjetosEMostrar() {
+  const { data } = await supabase.from('projetos_mapa').select('*, clientes(cliente_nome)');
+  todosProjetos = data || [];
+  aplicarFiltros();
+}
+
+function aplicarFiltros() {
+  const clienteId = document.getElementById('filtro-cliente').value;
+  const projetoId = document.getElementById('filtro-projeto').value;
+  const estado = document.getElementById('filtro-estado').value;
+
+  camadaProjetos.clearLayers();
+  todosProjetos
+    .filter(p => (!clienteId || p.cliente_id === clienteId) && (!projetoId || p.id === projetoId) && (!estado || p.estado === estado) && p.geom_geojson)
+    .forEach(p => desenharProjeto(p));
+}
+
+function desenharProjeto(p) {
+  if (!p.geom_geojson) return;
+  let geojson;
+  try { geojson = JSON.parse(p.geom_geojson); } catch (e) { return; }
+  const camada = L.geoJSON(geojson, {
+    style: { color: CORES_ESTADO[p.estado] || '#555', fillOpacity: 0.3 },
+    pointToLayer: (f, latlng) => L.circleMarker(latlng, { radius: 8, color: CORES_ESTADO[p.estado] || '#555', fillOpacity: 0.8 }),
+  }).addTo(camadaProjetos);
+  camada.on('click', () => mostrarDetalheProjeto(p));
+  camada.bindTooltip(p.titulo);
+}
+
+function mostrarDetalheProjeto(p) {
+  document.getElementById('painel-lateral').innerHTML = `
+    <h3>${p.titulo}</h3>
+    <p><span class="tag tag-${p.estado}">${p.estado}</span></p>
+    <table>
+      <tr><td>Cliente</td><td>${p.clientes?.cliente_nome || '-'}</td></tr>
+      <tr><td>Código GEOLAYER</td><td>${p.cod_geolayer || '-'}</td></tr>
+      <tr><td>Nº Processo DGT</td><td>${p.num_proc_dgt || '-'}</td></tr>
+      <tr><td>Distrito</td><td>${(p.proj_distrito||[]).join(', ') || '-'}</td></tr>
+      <tr><td>Concelho</td><td>${(p.proj_concelho||[]).join(', ') || '-'}</td></tr>
+      <tr><td>Área</td><td>${p.area || '-'} ha</td></tr>
+      <tr><td>Data Abertura</td><td>${p.data_abertura || '-'}</td></tr>
+      <tr><td>Data Prevista</td><td>${p.data_prevista_conclusao || '-'}</td></tr>
+      <tr><td>Equipamento</td><td>${p.equipamento_id || '-'}</td></tr>
+    </table>
+    <button class="primario" onclick="window.location.href='projeto-detalhe.html?id=${p.id}'">Abrir página completa</button>
+  `;
+}
+
+function procurar() {
+  const termo = document.getElementById('busca').value.toLowerCase();
+  const div = document.getElementById('sugestoes');
+  if (termo.length < 2) { div.innerHTML = ''; return; }
+  const resultados = todosProjetos.filter(p =>
+    (p.titulo || '').toLowerCase().includes(termo) ||
+    (p.cod_geolayer || '').toLowerCase().includes(termo) ||
+    (p.num_proc_dgt || '').toLowerCase().includes(termo) ||
+    (p.clientes?.cliente_nome || '').toLowerCase().includes(termo)
+  ).slice(0, 8);
+  div.innerHTML = resultados.map(p => `<div style="padding:6px; cursor:pointer;" onclick="irParaProjeto('${p.id}')">${p.titulo} — ${p.clientes?.cliente_nome || ''}</div>`).join('');
+}
+
+function irParaProjeto(id) {
+  const p = todosProjetos.find(x => x.id === id);
+  if (!p || !p.geom_geojson) return;
+  document.getElementById('sugestoes').innerHTML = '';
+  document.getElementById('busca').value = '';
+  let geojson;
+  try { geojson = JSON.parse(p.geom_geojson); } catch (e) { return; }
+  const camada = L.geoJSON(geojson);
+  mapa.fitBounds(camada.getBounds(), { maxZoom: 16 });
+  mostrarDetalheProjeto(p);
+}
+
+iniciar();
+</script>
+</body>
+</html>

@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="pt" data-tema="claro">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Configurações — GeoTrack</title>
+<link rel="stylesheet" href="../css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="topo" id="topo"></div>
+
+<div class="separadores">
+  <button class="ativo" onclick="mudarSeparador('empresa')">Empresa</button>
+  <button onclick="mudarSeparador('responsaveis')">Responsáveis Técnicos</button>
+  <button onclick="mudarSeparador('parametros')">Parâmetros PF</button>
+  <button onclick="mudarSeparador('equipamentos')">Equipamentos</button>
+  <button onclick="mudarSeparador('textos')">Textos dos Relatórios</button>
+  <button onclick="mudarSeparador('anac')">Zonas ANAC</button>
+</div>
+
+<div class="painel" id="sep-empresa"></div>
+<div class="painel" id="sep-responsaveis" style="display:none;"></div>
+<div class="painel" id="sep-parametros" style="display:none;"></div>
+<div class="painel" id="sep-equipamentos" style="display:none;"></div>
+<div class="painel" id="sep-textos" style="display:none;"></div>
+<div class="painel" id="sep-anac" style="display:none;"></div>
+
+<script src="../js/supabase-client.js"></script>
+<script src="../js/auth.js"></script>
+<script src="../js/tema.js"></script>
+<script src="../js/nav.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tmcw/togeojson@5.8.1/dist/togeojson.umd.js"></script>
+<script>
+let configCache = {};
+
+async function iniciar() {
+  const sessao = await exigirAdmin();
+  if (!sessao) return;
+  renderNavAdmin('configuracoes.html');
+  const { data } = await supabase.from('configuracoes').select('*');
+  (data || []).forEach(c => configCache[c.chave] = c.valor);
+  renderEmpresa();
+  renderResponsaveis();
+  renderParametros();
+  await renderEquipamentos();
+  await renderTextos();
+  await renderAnac();
+}
+
+function mudarSeparador(nome) {
+  ['empresa','responsaveis','parametros','equipamentos','textos','anac'].forEach(n => {
+    document.getElementById('sep-' + n).style.display = n === nome ? 'block' : 'none';
+  });
+  document.querySelectorAll('.separadores button').forEach(b => b.classList.remove('ativo'));
+  event.target.classList.add('ativo');
+}
+
+async function guardarConfig(chave, valor, categoria) {
+  await supabase.from('configuracoes').upsert({ chave, valor, categoria, data_atualizacao: new Date().toISOString() }, { onConflict: 'chave' });
+  configCache[chave] = valor;
+}
+
+function campoConfig(chave, rotulo, categoria) {
+  return `<div class="campo"><label>${rotulo}</label><br>
+    <input value="${(configCache[chave] || '').replace(/"/g,'&quot;')}" style="width:400px"
+      onchange="guardarConfig('${chave}', this.value, '${categoria}')"></div>`;
+}
+
+function renderEmpresa() {
+  document.getElementById('sep-empresa').innerHTML = `
+    <h3>Dados da Empresa</h3>
+    ${campoConfig('empresa_nome', 'Nome da Empresa', 'empresa')}
+    ${campoConfig('empresa_morada', 'Morada', 'empresa')}
+    ${campoConfig('empresa_email', 'Email de Contacto', 'empresa')}
+    ${campoConfig('empresa_footer_anexos', 'Código do Rodapé dos Anexos', 'empresa')}
+    ${campoConfig('empresa_fonte_pf', 'Texto "Fonte" dos Relatórios de PF', 'empresa')}
+  `;
+}
+
+function renderResponsaveis() {
+  document.getElementById('sep-responsaveis').innerHTML = `
+    <h3>Técnico Responsável DGT</h3>
+    ${campoConfig('tecnico_dgt_nome', 'Nome Completo', 'responsaveis')}
+    ${campoConfig('tecnico_dgt_cartao_cidadao', 'Cartão de Cidadão', 'responsaveis')}
+    ${campoConfig('tecnico_dgt_morada_profissional', 'Morada Profissional', 'responsaveis')}
+    ${campoConfig('tecnico_dgt_ordem', 'Ordem Profissional', 'responsaveis')}
+    ${campoConfig('tecnico_dgt_numero_inscricao', 'Nº de Inscrição', 'responsaveis')}
+    <h3>Técnico de Campo (PFs)</h3>
+    ${campoConfig('tecnico_campo_nome', 'Nome', 'responsaveis')}
+    <h3>Coordenador GEOLAYER (valor por defeito)</h3>
+    ${campoConfig('coordenador_geolayer_defeito', 'Nome', 'responsaveis')}
+  `;
+}
+
+function renderParametros() {
+  document.getElementById('sep-parametros').innerHTML = `
+    <h3>Parâmetros de Levantamento PF (fixos por defeito)</h3>
+    ${campoConfig('pf_sistema_coordenadas_defeito', 'Sistema de Coordenadas', 'parametros_pf')}
+    ${campoConfig('pf_mascara', 'Máscara (º)', 'parametros_pf')}
+    ${campoConfig('pf_taxa_observacao', 'Taxa de Observação (s)', 'parametros_pf')}
+    ${campoConfig('pf_estacao_referencia', 'Estação de Referência', 'parametros_pf')}
+    ${campoConfig('pf_numero_epocas', 'Número de Épocas', 'parametros_pf')}
+    <h3>Textos Padrão de Observações (dropdown nos PFs)</h3>
+    <div id="lista-obs-padrao"></div>
+    <button onclick="adicionarTextoObs()">+ Adicionar texto</button>
+  `;
+  renderListaObsPadrao();
+}
+
+function renderListaObsPadrao() {
+  const chaves = Object.keys(configCache).filter(k => k.startsWith('pf_obs_padrao_')).sort();
+  document.getElementById('lista-obs-padrao').innerHTML = chaves.map(k => `
+    <div class="campo"><input value="${configCache[k].replace(/"/g,'&quot;')}" style="width:500px"
+      onchange="guardarConfig('${k}', this.value, 'parametros_pf')">
+      <button onclick="removerTextoObs('${k}')">Remover</button></div>
+  `).join('');
+}
+
+function adicionarTextoObs() {
+  const chaves = Object.keys(configCache).filter(k => k.startsWith('pf_obs_padrao_'));
+  const novaChave = 'pf_obs_padrao_' + (chaves.length + 1);
+  guardarConfig(novaChave, 'Novo texto...', 'parametros_pf').then(renderListaObsPadrao);
+}
+
+async function removerTextoObs(chave) {
+  await supabase.from('configuracoes').delete().eq('chave', chave);
+  delete configCache[chave];
+  renderListaObsPadrao();
+}
+
+// ---------------------------------------------------------------- EQUIPAMENTOS
+async function renderEquipamentos() {
+  const { data } = await supabase.from('equipamentos').select('*').order('marca');
+  document.getElementById('sep-equipamentos').innerHTML = `
+    <h3>Equipamentos (VANT + câmara)</h3>
+    <table>
+      <thead><tr><th>Marca</th><th>Modelo</th><th>Ativo por defeito</th><th></th></tr></thead>
+      <tbody>${(data || []).map(e => `
+        <tr>
+          <td>${e.marca}</td><td>${e.modelo}</td>
+          <td><input type="radio" name="defeito" ${e.ativo_por_defeito ? 'checked' : ''} onchange="marcarEquipamentoDefeito('${e.id}')"></td>
+          <td><button onclick="eliminarEquipamento('${e.id}')">Eliminar</button></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    <h4>Novo Equipamento</h4>
+    <div class="grelha">
+      <input id="eq-marca" placeholder="Marca">
+      <input id="eq-modelo" placeholder="Modelo">
+      <input id="eq-peso" placeholder="Peso (kg)">
+      <input id="eq-autonomia" placeholder="Autonomia (min)">
+      <input id="eq-sensor" placeholder="Sensor / Câmara">
+      <input id="eq-altura" placeholder="Altura de voo recomendada (m)">
+      <input id="eq-gsd" placeholder="GSD típico (cm)">
+    </div>
+    <button class="primario" onclick="adicionarEquipamento()">Adicionar</button>
+  `;
+}
+
+async function adicionarEquipamento() {
+  await supabase.from('equipamentos').insert({
+    marca: document.getElementById('eq-marca').value,
+    modelo: document.getElementById('eq-modelo').value,
+    especificacoes: {
+      peso_kg: document.getElementById('eq-peso').value,
+      autonomia_min: document.getElementById('eq-autonomia').value,
+      sensor: document.getElementById('eq-sensor').value,
+      altura_voo_recomendada_m: document.getElementById('eq-altura').value,
+      gsd_tipico_cm: document.getElementById('eq-gsd').value,
+    },
+  });
+  await renderEquipamentos();
+}
+
+async function marcarEquipamentoDefeito(id) {
+  await supabase.from('equipamentos').update({ ativo_por_defeito: true }).eq('id', id);
+  await renderEquipamentos();
+}
+
+async function eliminarEquipamento(id) {
+  if (!confirm('Eliminar este equipamento?')) return;
+  await supabase.from('equipamentos').delete().eq('id', id);
+  await renderEquipamentos();
+}
+
+// ---------------------------------------------------------------- TEXTOS DOS RELATÓRIOS
+async function renderTextos(documentoSelecionado) {
+  const documentos = ['RProducao','TCompromisso_CEncargos','FormularioDGT','MetadadosXML','RelatorioPFs'];
+  const doc = documentoSelecionado || documentos[0];
+  const { data } = await supabase.from('relatorio_blocos').select('*').eq('documento', doc).order('ordem');
+  document.getElementById('sep-textos').innerHTML = `
+    <h3>Textos dos Relatórios</h3>
+    <select onchange="renderTextos(this.value)">
+      ${documentos.map(d => `<option value="${d}" ${d===doc?'selected':''}>${d}</option>`).join('')}
+    </select>
+    <button onclick="novoBloco('${doc}')">+ Novo bloco</button>
+    <div id="lista-blocos" style="margin-top:12px;">
+      ${(data || []).map((b, i) => `
+        <div class="painel" style="margin:8px 0;">
+          <div style="display:flex; justify-content:space-between;">
+            <strong>${b.seccao_numero || ''} ${b.seccao_titulo || ''}</strong>
+            <div>
+              <button onclick="moverBloco('${b.id}', '${doc}', ${i}, -1)">↑</button>
+              <button onclick="moverBloco('${b.id}', '${doc}', ${i}, 1)">↓</button>
+              <label><input type="checkbox" ${b.ativo ? 'checked' : ''} onchange="toggleBlocoAtivo('${b.id}', this.checked, '${doc}')"> Ativo</label>
+            </div>
+          </div>
+          <div class="campo"><label>Condição (vazio = mostrar sempre)</label><br>
+            <input value="${b.condicao || ''}" onchange="atualizarCondicaoBloco('${b.id}', this.value, '${doc}')" placeholder="ex: com_correcao / sem_correcao"></div>
+          <textarea style="width:100%" rows="3" onchange="atualizarConteudoBloco('${b.id}', this.value, '${doc}')">${(b.conteudo?.texto || '')}</textarea>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function novoBloco(doc) {
+  const { data } = await supabase.from('relatorio_blocos').select('ordem').eq('documento', doc).order('ordem', { ascending: false }).limit(1);
+  const ordem = (data?.[0]?.ordem || 0) + 10;
+  await supabase.from('relatorio_blocos').insert({ documento: doc, ordem, conteudo: { texto: '' } });
+  await renderTextos(doc);
+}
+
+async function atualizarConteudoBloco(id, texto, doc) {
+  await supabase.from('relatorio_blocos').update({ conteudo: { texto } }).eq('id', id);
+}
+async function atualizarCondicaoBloco(id, condicao, doc) {
+  await supabase.from('relatorio_blocos').update({ condicao: condicao || null }).eq('id', id);
+}
+async function toggleBlocoAtivo(id, ativo, doc) {
+  await supabase.from('relatorio_blocos').update({ ativo }).eq('id', id);
+}
+async function moverBloco(id, doc, indice, direcao) {
+  const { data } = await supabase.from('relatorio_blocos').select('*').eq('documento', doc).order('ordem');
+  const alvo = indice + direcao;
+  if (alvo < 0 || alvo >= data.length) return;
+  const a = data[indice], b = data[alvo];
+  await supabase.from('relatorio_blocos').update({ ordem: b.ordem }).eq('id', a.id);
+  await supabase.from('relatorio_blocos').update({ ordem: a.ordem }).eq('id', b.id);
+  await renderTextos(doc);
+}
+
+// ---------------------------------------------------------------- ZONAS ANAC
+async function renderAnac() {
+  const { data } = await supabase.from('zonas_anac').select('id, nome, description');
+  document.getElementById('sep-anac').innerHTML = `
+    <h3>Zonas de Restrição ANAC</h3>
+    <p style="font-size:13px;color:var(--texto-suave);">Carrega o ficheiro KML ou GeoJSON com as zonas de restrição de voo.</p>
+    <input type="file" id="anac-ficheiro" accept=".kml,.geojson,.json">
+    <button class="primario" onclick="importarAnac()">Importar</button>
+    <table style="margin-top:10px;">
+      <thead><tr><th>Nome</th><th>Descrição</th><th></th></tr></thead>
+      <tbody>${(data || []).map(z => `<tr><td>${z.nome || '-'}</td><td>${z.description || '-'}</td><td><button onclick="eliminarZonaAnac('${z.id}')">Eliminar</button></td></tr>`).join('')}</tbody>
+    </table>
+  `;
+}
+
+async function importarAnac() {
+  const ficheiro = document.getElementById('anac-ficheiro').files[0];
+  if (!ficheiro) { alert('Escolhe um ficheiro.'); return; }
+  const texto = await ficheiro.text();
+  let geojson;
+  if (ficheiro.name.endsWith('.kml')) {
+    const dom = new DOMParser().parseFromString(texto, 'text/xml');
+    geojson = toGeoJSON.kml(dom);
+  } else {
+    geojson = JSON.parse(texto);
+  }
+  const features = geojson.features || [];
+  for (const f of features) {
+    await supabase.rpc('importar_zona_anac', {
+      p_nome: f.properties?.name || f.properties?.nome || null,
+      p_description: f.properties?.description || f.properties?.descricao || null,
+      p_geojson: JSON.stringify(f.geometry),
+      p_raio_metros: f.properties?.raio_metros || null,
+    });
+  }
+  alert(features.length + ' zona(s) importada(s).');
+  await renderAnac();
+}
+
+async function eliminarZonaAnac(id) {
+  if (!confirm('Eliminar esta zona?')) return;
+  await supabase.from('zonas_anac').delete().eq('id', id);
+  await renderAnac();
+}
+
+iniciar();
+</script>
+</body>
+</html>
