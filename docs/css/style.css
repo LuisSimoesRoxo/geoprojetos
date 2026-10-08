@@ -103,3 +103,34 @@ button.primario:hover { background: var(--primaria-hover); }
 .separadores button.ativo { color: var(--primaria); border-bottom-color: var(--primaria); }
 
 #mapa { height: 70vh; border-radius: 8px; }
+
+.cabecalho-inicial {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  background: var(--bg-painel);
+  border-bottom: 1px solid var(--borda);
+  font-size: 15px;
+}
+.cabecalho-inicial img { height: 32px; width: auto; }
+
+.campo-password { position: relative; }
+.campo-password input { width: 100%; padding-right: 36px; }
+.alternar-password {
+  position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer; font-size: 16px; padding: 4px 6px;
+}
+
+.painel-lateral-direito {
+  position: fixed; top: 0; right: 0; height: 100vh; width: 380px; max-width: 90vw;
+  background: var(--bg-painel); border-left: 1px solid var(--borda);
+  box-shadow: -6px 0 16px rgba(0,0,0,.15); padding: 20px; overflow-y: auto;
+  transform: translateX(100%); transition: transform .2s ease; z-index: 500;
+}
+.painel-lateral-direito.aberto { transform: translateX(0); }
+.fundo-painel-lateral {
+  position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 499;
+  display: none;
+}
+.fundo-painel-lateral.aberto { display: block; }

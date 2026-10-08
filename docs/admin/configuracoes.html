@@ -11,6 +11,7 @@
 
 <div class="separadores">
   <button class="ativo" onclick="mudarSeparador('empresa')">Empresa</button>
+  <button onclick="mudarSeparador('pagina-inicial')">Página Inicial</button>
   <button onclick="mudarSeparador('responsaveis')">Responsáveis Técnicos</button>
   <button onclick="mudarSeparador('parametros')">Parâmetros PF</button>
   <button onclick="mudarSeparador('equipamentos')">Equipamentos</button>
@@ -19,6 +20,7 @@
 </div>
 
 <div class="painel" id="sep-empresa"></div>
+<div class="painel" id="sep-pagina-inicial" style="display:none;"></div>
 <div class="painel" id="sep-responsaveis" style="display:none;"></div>
 <div class="painel" id="sep-parametros" style="display:none;"></div>
 <div class="painel" id="sep-equipamentos" style="display:none;"></div>
@@ -40,6 +42,7 @@ async function iniciar() {
   const { data } = await supabase.from('configuracoes').select('*');
   (data || []).forEach(c => configCache[c.chave] = c.valor);
   renderEmpresa();
+  renderPaginaInicial();
   renderResponsaveis();
   renderParametros();
   await renderEquipamentos();
@@ -48,7 +51,7 @@ async function iniciar() {
 }
 
 function mudarSeparador(nome) {
-  ['empresa','responsaveis','parametros','equipamentos','textos','anac'].forEach(n => {
+  ['empresa','pagina-inicial','responsaveis','parametros','equipamentos','textos','anac'].forEach(n => {
     document.getElementById('sep-' + n).style.display = n === nome ? 'block' : 'none';
   });
   document.querySelectorAll('.separadores button').forEach(b => b.classList.remove('ativo'));
@@ -72,8 +75,29 @@ function renderEmpresa() {
     ${campoConfig('empresa_nome', 'Nome da Empresa', 'empresa')}
     ${campoConfig('empresa_morada', 'Morada', 'empresa')}
     ${campoConfig('empresa_email', 'Email de Contacto', 'empresa')}
+    ${campoConfig('empresa_logo_url', 'Logótipo (URL da imagem)', 'empresa')}
+    <p style="font-size:12px;color:var(--texto-suave);margin-top:-6px;">
+      Cola aqui o link de uma imagem já alojada (ex.: no vosso site) — o upload direto de
+      ficheiros fica para uma próxima ronda. Aparece no cabeçalho da página inicial.
+    </p>
     ${campoConfig('empresa_footer_anexos', 'Código do Rodapé dos Anexos', 'empresa')}
     ${campoConfig('empresa_fonte_pf', 'Texto "Fonte" dos Relatórios de PF', 'empresa')}
+  `;
+}
+
+// ---------------------------------------------------------------- PÁGINA INICIAL
+function renderPaginaInicial() {
+  document.getElementById('sep-pagina-inicial').innerHTML = `
+    <h3>Página Inicial (página pública de entrada)</h3>
+    <p style="font-size:13px;color:var(--texto-suave);">
+      Título, subtítulo e imagem de apresentação mostrados a quem chega ao site antes de
+      entrar. O logótipo da empresa define-se na aba "Empresa".
+    </p>
+    ${campoConfig('home_titulo', 'Título', 'pagina_inicial')}
+    ${campoConfig('home_subtitulo', 'Subtítulo / descrição curta', 'pagina_inicial')}
+    ${campoConfig('home_imagem_url', 'Imagem de apresentação (URL)', 'pagina_inicial')}
+    ${campoConfig('home_descricao_imagem', 'Descrição sob a imagem', 'pagina_inicial')}
+    ${campoConfig('home_creditos_imagem', 'Créditos da imagem', 'pagina_inicial')}
   `;
 }
 
@@ -129,21 +153,28 @@ async function removerTextoObs(chave) {
 }
 
 // ---------------------------------------------------------------- EQUIPAMENTOS
+let equipamentosCache = [];
+let equipamentoEmEdicao = null; // id, ou null para "novo"
+
 async function renderEquipamentos() {
   const { data } = await supabase.from('equipamentos').select('*').order('marca');
+  equipamentosCache = data || [];
   document.getElementById('sep-equipamentos').innerHTML = `
     <h3>Equipamentos (VANT + câmara)</h3>
     <table>
       <thead><tr><th>Marca</th><th>Modelo</th><th>Ativo por defeito</th><th></th></tr></thead>
-      <tbody>${(data || []).map(e => `
+      <tbody>${equipamentosCache.map(e => `
         <tr>
           <td>${e.marca}</td><td>${e.modelo}</td>
           <td><input type="radio" name="defeito" ${e.ativo_por_defeito ? 'checked' : ''} onchange="marcarEquipamentoDefeito('${e.id}')"></td>
-          <td><button onclick="eliminarEquipamento('${e.id}')">Eliminar</button></td>
+          <td>
+            <button onclick="editarEquipamento('${e.id}')">Ver / Editar</button>
+            <button onclick="eliminarEquipamento('${e.id}')">Eliminar</button>
+          </td>
         </tr>`).join('')}
       </tbody>
     </table>
-    <h4>Novo Equipamento</h4>
+    <h4>${equipamentoEmEdicao ? 'Editar Equipamento' : 'Novo Equipamento'}</h4>
     <div class="grelha">
       <input id="eq-marca" placeholder="Marca">
       <input id="eq-modelo" placeholder="Modelo">
@@ -153,12 +184,35 @@ async function renderEquipamentos() {
       <input id="eq-altura" placeholder="Altura de voo recomendada (m)">
       <input id="eq-gsd" placeholder="GSD típico (cm)">
     </div>
-    <button class="primario" onclick="adicionarEquipamento()">Adicionar</button>
+    <button class="primario" onclick="guardarEquipamento()">${equipamentoEmEdicao ? 'Guardar alterações' : 'Adicionar'}</button>
+    ${equipamentoEmEdicao ? `<button onclick="cancelarEdicaoEquipamento()">Cancelar</button>` : ''}
   `;
+  if (equipamentoEmEdicao) {
+    const e = equipamentosCache.find(x => x.id === equipamentoEmEdicao);
+    if (e) {
+      document.getElementById('eq-marca').value = e.marca || '';
+      document.getElementById('eq-modelo').value = e.modelo || '';
+      document.getElementById('eq-peso').value = e.especificacoes?.peso_kg || '';
+      document.getElementById('eq-autonomia').value = e.especificacoes?.autonomia_min || '';
+      document.getElementById('eq-sensor').value = e.especificacoes?.sensor || '';
+      document.getElementById('eq-altura').value = e.especificacoes?.altura_voo_recomendada_m || '';
+      document.getElementById('eq-gsd').value = e.especificacoes?.gsd_tipico_cm || '';
+    }
+  }
 }
 
-async function adicionarEquipamento() {
-  await supabase.from('equipamentos').insert({
+function editarEquipamento(id) {
+  equipamentoEmEdicao = id;
+  renderEquipamentos();
+}
+
+function cancelarEdicaoEquipamento() {
+  equipamentoEmEdicao = null;
+  renderEquipamentos();
+}
+
+async function guardarEquipamento() {
+  const registo = {
     marca: document.getElementById('eq-marca').value,
     modelo: document.getElementById('eq-modelo').value,
     especificacoes: {
@@ -168,7 +222,13 @@ async function adicionarEquipamento() {
       altura_voo_recomendada_m: document.getElementById('eq-altura').value,
       gsd_tipico_cm: document.getElementById('eq-gsd').value,
     },
-  });
+  };
+  if (equipamentoEmEdicao) {
+    await supabase.from('equipamentos').update(registo).eq('id', equipamentoEmEdicao);
+    equipamentoEmEdicao = null;
+  } else {
+    await supabase.from('equipamentos').insert(registo);
+  }
   await renderEquipamentos();
 }
 
@@ -242,15 +302,22 @@ async function moverBloco(id, doc, indice, direcao) {
 
 // ---------------------------------------------------------------- ZONAS ANAC
 async function renderAnac() {
-  const { data } = await supabase.from('zonas_anac').select('id, nome, description');
+  const { data, error } = await supabase.from('zonas_anac').select('id, nome, description').order('nome');
+  if (error) console.error('Erro a listar zonas ANAC:', error);
   document.getElementById('sep-anac').innerHTML = `
     <h3>Zonas de Restrição ANAC</h3>
-    <p style="font-size:13px;color:var(--texto-suave);">Carrega o ficheiro KML ou GeoJSON com as zonas de restrição de voo.</p>
+    <p style="font-size:13px;color:var(--texto-suave);">Carrega o ficheiro KML ou GeoJSON com as zonas de restrição de voo.
+      Em ficheiros grandes a importação pode demorar até 1 minuto — não fecha a página.</p>
     <input type="file" id="anac-ficheiro" accept=".kml,.geojson,.json">
     <button class="primario" onclick="importarAnac()">Importar</button>
+    <p id="anac-progresso" style="display:none; color:var(--texto-suave);"></p>
+    <p style="font-size:13px;color:var(--texto-suave);">
+      ${(data || []).length} zona(s) guardada(s) de momento. Também ficam visíveis no Mapa (separador "Zonas ANAC").
+    </p>
     <table style="margin-top:10px;">
       <thead><tr><th>Nome</th><th>Descrição</th><th></th></tr></thead>
-      <tbody>${(data || []).map(z => `<tr><td>${z.nome || '-'}</td><td>${z.description || '-'}</td><td><button onclick="eliminarZonaAnac('${z.id}')">Eliminar</button></td></tr>`).join('')}</tbody>
+      <tbody>${(data || []).length ? data.map(z => `<tr><td>${z.nome || '-'}</td><td>${z.description || '-'}</td><td><button onclick="eliminarZonaAnac('${z.id}')">Eliminar</button></td></tr>`).join('')
+        : `<tr><td colspan="3" style="color:var(--texto-suave);">Ainda sem zonas guardadas.</td></tr>`}</tbody>
     </table>
   `;
 }
@@ -258,6 +325,10 @@ async function renderAnac() {
 async function importarAnac() {
   const ficheiro = document.getElementById('anac-ficheiro').files[0];
   if (!ficheiro) { alert('Escolhe um ficheiro.'); return; }
+  const progresso = document.getElementById('anac-progresso');
+  progresso.style.display = 'block';
+  progresso.textContent = 'A ler o ficheiro...';
+
   const texto = await ficheiro.text();
   let geojson;
   if (ficheiro.name.endsWith('.kml')) {
@@ -266,16 +337,29 @@ async function importarAnac() {
   } else {
     geojson = JSON.parse(texto);
   }
-  const features = geojson.features || [];
-  for (const f of features) {
-    await supabase.rpc('importar_zona_anac', {
+  const features = (geojson.features || []).filter(f => f.geometry);
+  const semGeometria = (geojson.features || []).length - features.length;
+
+  let sucesso = 0;
+  const erros = [];
+  for (let i = 0; i < features.length; i++) {
+    const f = features[i];
+    progresso.textContent = `A importar ${i + 1}/${features.length}...`;
+    const { error } = await supabase.rpc('importar_zona_anac', {
       p_nome: f.properties?.name || f.properties?.nome || null,
       p_description: f.properties?.description || f.properties?.descricao || null,
       p_geojson: JSON.stringify(f.geometry),
       p_raio_metros: f.properties?.raio_metros || null,
     });
+    if (error) { erros.push(error.message); console.error('Erro a importar zona ANAC:', error); }
+    else sucesso++;
   }
-  alert(features.length + ' zona(s) importada(s).');
+
+  progresso.style.display = 'none';
+  let resumo = `${sucesso} zona(s) importada(s) com sucesso.`;
+  if (semGeometria) resumo += ` ${semGeometria} sem geometria válida, ignorada(s).`;
+  if (erros.length) resumo += ` ${erros.length} falharam (ver consola do browser para detalhes).`;
+  alert(resumo);
   await renderAnac();
 }
 

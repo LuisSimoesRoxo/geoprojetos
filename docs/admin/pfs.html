@@ -13,6 +13,46 @@
   <h2>Pontos Fotogramétricos (PFs)</h2>
   <div class="campo"><label>Projeto</label><br><select id="filtro-projeto" onchange="carregarPfs()" style="width:100%"></select></div>
   <button class="primario" onclick="abrirFormulario()">+ Novo PF</button>
+  <button onclick="document.getElementById('input-txt').click()">Importar TXT</button>
+  <input type="file" id="input-txt" accept=".txt,.csv" style="display:none;" onchange="lerFicheiroTxt(event)">
+  <button onclick="alternarGuiaTxt()" style="color:var(--texto-suave);">? Formato do ficheiro</button>
+  <div id="guia-txt" class="painel" style="display:none; font-size:13px;">
+    <p>O ficheiro deve ter uma linha de cabeçalho e depois uma linha por PF, separado por
+      <strong>tab</strong>, <strong>vírgula</strong> ou <strong>ponto e vírgula</strong>. Nomes de
+      coluna reconhecidos automaticamente (não sensível a maiúsculas/acentos):</p>
+    <ul style="margin:6px 0;">
+      <li><code>pf</code> / <code>num</code> / <code>ponto</code> — nº do PF</li>
+      <li><code>lat</code> / <code>latitude</code> e <code>lon</code> / <code>longitude</code> — posição (WGS84)</li>
+      <li><code>x</code> / <code>m</code> / <code>este</code> — coordenada M</li>
+      <li><code>y</code> / <code>p</code> / <code>norte</code> — coordenada P</li>
+      <li><code>z</code> / <code>cota</code> — Z do PF</li>
+      <li><code>zsolo</code> / <code>z_solo</code> — Z do PF no solo</li>
+      <li><code>data</code> — data de observação</li>
+      <li><code>obs</code> / <code>observacoes</code> — observações</li>
+    </ul>
+    <p>Se o ficheiro tiver <strong>latitude/longitude</strong>, o PF já fica pronto a gravar.
+      Sem essas colunas, o PF entra na revisão para preenchimento manual da posição — o resto
+      (M, P, Z, data, observações) já vem preenchido.</p>
+    <p>Exemplo (separado por tabs):<br>
+      <code>pf&nbsp;&nbsp;lat&nbsp;&nbsp;lon&nbsp;&nbsp;z&nbsp;&nbsp;obs<br>
+      1&nbsp;&nbsp;40.3651&nbsp;&nbsp;-8.4352&nbsp;&nbsp;123.45&nbsp;&nbsp;pintura no solo</code></p>
+  </div>
+
+  <div class="painel" id="painel-revisao" style="display:none;">
+    <h3>Revisão da importação</h3>
+    <p style="font-size:13px;color:var(--texto-suave);">
+      Confirma/completa os campos antes de gravar. Linhas a vermelho ainda não têm
+      latitude/longitude (obrigatório) — escreve os valores para poderes gravar.
+    </p>
+    <table>
+      <thead><tr><th>PF Nº</th><th>Latitude</th><th>Longitude</th><th>M</th><th>P</th><th>Z</th><th>Z solo</th><th>Data</th><th>Observações</th></tr></thead>
+      <tbody id="tabela-revisao"></tbody>
+    </table>
+    <button class="primario" onclick="confirmarImportacaoTxt()">Gravar todos os PFs válidos</button>
+    <button onclick="cancelarImportacaoTxt()">Cancelar</button>
+    <p id="resumo-importacao" style="font-size:13px;color:var(--texto-suave);"></p>
+  </div>
+
   <table style="margin-top:10px;">
     <thead><tr><th>PF Nº</th><th>Data</th><th>Hora</th><th>M / P / Z</th><th>Observações</th><th></th></tr></thead>
     <tbody id="tabela-pfs"></tbody>
@@ -166,6 +206,149 @@ async function guardarPf(e) {
 async function eliminarPf(id) {
   if (!confirm('Eliminar este PF?')) return;
   await supabase.from('pfs').delete().eq('id', id);
+  await carregarPfs();
+}
+
+function alternarGuiaTxt() {
+  const g = document.getElementById('guia-txt');
+  g.style.display = g.style.display === 'none' ? 'block' : 'none';
+}
+
+// -------------------------------------------------------------- IMPORTAR TXT
+let linhasImportacao = [];
+
+const ALIASES_COLUNAS = {
+  pf_num: ['pf', 'num', 'numero', 'nº', 'n', 'ponto', 'pfnum'],
+  lat: ['lat', 'latitude'],
+  lon: ['lon', 'lng', 'long', 'longitude'],
+  coord_m: ['x', 'm', 'este', 'easting'],
+  coord_p: ['y', 'p', 'norte', 'northing'],
+  coord_z_pf: ['z', 'cota', 'altitude', 'elevacao', 'zpf'],
+  coord_z_pfsolo: ['zsolo', 'z_solo', 'zpfsolo', 'cotasolo'],
+  data_observacao: ['data', 'data_observacao', 'date'],
+  observacoes: ['obs', 'observacoes', 'observacao', 'nota', 'notas'],
+};
+
+function normalizarTexto(s) {
+  return (s || '').toString().trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function detetarSeparador(linha) {
+  const candidatos = ['\t', ';', ','];
+  let melhor = candidatos[0], max = 0;
+  candidatos.forEach(sep => {
+    const n = linha.split(sep).length;
+    if (n > max) { max = n; melhor = sep; }
+  });
+  return melhor;
+}
+
+function lerFicheiroTxt(e) {
+  const ficheiro = e.target.files[0];
+  if (!ficheiro) return;
+  const reader = new FileReader();
+  reader.onload = () => processarTextoTxt(reader.result);
+  reader.readAsText(ficheiro, 'utf-8');
+  e.target.value = '';
+}
+
+function processarTextoTxt(texto) {
+  const linhas = texto.split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
+  if (linhas.length < 2) { alert('O ficheiro não tem linhas suficientes (precisa de cabeçalho + pelo menos 1 PF).'); return; }
+
+  const separador = detetarSeparador(linhas[0]);
+  const cabecalho = linhas[0].split(separador).map(normalizarTexto);
+
+  // mapa coluna-do-ficheiro -> campo interno
+  const mapaColunas = cabecalho.map(h => {
+    for (const campo in ALIASES_COLUNAS) {
+      if (ALIASES_COLUNAS[campo].includes(h)) return campo;
+    }
+    return null;
+  });
+
+  if (!mapaColunas.includes('pf_num')) {
+    alert('Não encontrei uma coluna com o número do PF (ex.: "pf", "num", "ponto"). Revê o cabeçalho do ficheiro.');
+    return;
+  }
+
+  linhasImportacao = linhas.slice(1).map(linha => {
+    const valores = linha.split(separador);
+    const registo = {};
+    mapaColunas.forEach((campo, i) => {
+      if (campo) registo[campo] = (valores[i] || '').trim();
+    });
+    return registo;
+  }).filter(r => r.pf_num);
+
+  renderizarRevisaoTxt();
+}
+
+function renderizarRevisaoTxt() {
+  document.getElementById('painel-revisao').style.display = linhasImportacao.length ? 'block' : 'none';
+  document.getElementById('tabela-revisao').innerHTML = linhasImportacao.map((r, i) => {
+    const semPosicao = !r.lat || !r.lon;
+    return `<tr style="${semPosicao ? 'background:rgba(192,57,43,.12);' : ''}">
+      <td>${r.pf_num}</td>
+      <td><input style="width:100px" value="${r.lat || ''}" onchange="atualizarLinhaTxt(${i},'lat',this.value)"></td>
+      <td><input style="width:100px" value="${r.lon || ''}" onchange="atualizarLinhaTxt(${i},'lon',this.value)"></td>
+      <td><input style="width:90px" value="${r.coord_m || ''}" onchange="atualizarLinhaTxt(${i},'coord_m',this.value)"></td>
+      <td><input style="width:90px" value="${r.coord_p || ''}" onchange="atualizarLinhaTxt(${i},'coord_p',this.value)"></td>
+      <td><input style="width:80px" value="${r.coord_z_pf || ''}" onchange="atualizarLinhaTxt(${i},'coord_z_pf',this.value)"></td>
+      <td><input style="width:80px" value="${r.coord_z_pfsolo || ''}" onchange="atualizarLinhaTxt(${i},'coord_z_pfsolo',this.value)"></td>
+      <td><input type="date" value="${r.data_observacao || ''}" onchange="atualizarLinhaTxt(${i},'data_observacao',this.value)"></td>
+      <td><input style="width:160px" value="${(r.observacoes || '').replace(/"/g,'&quot;')}" onchange="atualizarLinhaTxt(${i},'observacoes',this.value)"></td>
+    </tr>`;
+  }).join('');
+  const semPosicao = linhasImportacao.filter(r => !r.lat || !r.lon).length;
+  document.getElementById('resumo-importacao').textContent =
+    `${linhasImportacao.length} PF(s) lido(s) do ficheiro. ` +
+    (semPosicao ? `${semPosicao} ainda sem latitude/longitude — completa antes de gravar.` : 'Todos têm posição — prontos a gravar.');
+}
+
+function atualizarLinhaTxt(indice, campo, valor) {
+  linhasImportacao[indice][campo] = valor;
+  renderizarRevisaoTxt();
+}
+
+function cancelarImportacaoTxt() {
+  linhasImportacao = [];
+  document.getElementById('painel-revisao').style.display = 'none';
+}
+
+async function confirmarImportacaoTxt() {
+  if (!projetoAtual) { alert('Escolhe primeiro o projeto no filtro acima.'); return; }
+  const prontos = linhasImportacao.filter(r => r.lat && r.lon);
+  const pendentes = linhasImportacao.length - prontos.length;
+  if (!prontos.length) { alert('Nenhum PF tem latitude/longitude preenchida ainda.'); return; }
+
+  const payload = prontos.map(r => ({
+    projeto_id: projetoAtual,
+    pf_num: Number(r.pf_num),
+    geom: `SRID=4326;POINT(${Number(r.lon)} ${Number(r.lat)})`,
+    coord_m: r.coord_m || null,
+    coord_p: r.coord_p || null,
+    coord_z_pf: r.coord_z_pf || null,
+    coord_z_pfsolo: r.coord_z_pfsolo || null,
+    data_observacao: r.data_observacao || null,
+    observacoes: r.observacoes || null,
+  }));
+
+  const { error } = await supabase.from('pfs').insert(payload);
+  if (error) {
+    alert('Erro ao gravar: ' + error.message + '\n\n(Confirma que não há PFs com esse número já criados neste projeto.)');
+    return;
+  }
+
+  linhasImportacao = linhasImportacao.filter(r => !r.lat || !r.lon);
+  if (linhasImportacao.length) {
+    renderizarRevisaoTxt();
+    alert(`${prontos.length} PF(s) gravado(s). Ficam ${linhasImportacao.length} na tabela, à espera da posição.`);
+  } else {
+    document.getElementById('painel-revisao').style.display = 'none';
+  }
   await carregarPfs();
 }
 

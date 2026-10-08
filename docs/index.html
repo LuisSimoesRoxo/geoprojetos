@@ -9,12 +9,18 @@
 </head>
 <body>
 
-<div style="max-width:480px;margin:60px auto;padding:0 16px;">
-  <h1 style="text-align:center;">GeoTrack SIG</h1>
-  <p style="text-align:center;color:var(--texto-suave);">
-    Sistema de gestão de projetos de cartografia e fotogrametria da GEOLAYER —
-    acompanhe os seus projetos, consulte relatórios e fale connosco.
-  </p>
+<header class="cabecalho-inicial" id="cabecalho-inicial">
+  <img id="cabecalho-logo" src="" alt="Logótipo" style="display:none;">
+  <strong>GEOLAYER</strong>
+</header>
+
+<div style="max-width:480px;margin:40px auto;padding:0 16px;">
+  <img id="home-imagem" src="" alt="" style="display:none; width:100%; border-radius:8px; margin-bottom:6px;">
+  <p id="home-descricao-imagem" style="display:none; font-size:12px; color:var(--texto-suave); text-align:center; margin-top:0;"></p>
+  <p id="home-creditos-imagem" style="display:none; font-size:11px; color:var(--texto-suave); text-align:center; margin-top:-8px;"></p>
+
+  <h1 id="home-titulo" style="text-align:center;">GeoTrack SIG</h1>
+  <p id="home-subtitulo" style="text-align:center;color:var(--texto-suave);"></p>
 
   <div class="painel" id="escolha">
     <div style="display:flex; gap:12px;">
@@ -27,12 +33,18 @@
     <h3 id="titulo-login"></h3>
     <form onsubmit="submeterLogin(event)">
       <p><input type="email" id="email" placeholder="Email" required style="width:100%"></p>
-      <p><input type="password" id="password" placeholder="Password" required style="width:100%"></p>
+      <p class="campo-password">
+        <input type="password" id="password" placeholder="Password" required style="width:100%">
+        <button type="button" class="alternar-password" onclick="alternarPassword('password', this)" aria-label="Mostrar password">👁</button>
+      </p>
       <p id="erro-login" style="color:var(--alerta); display:none;"></p>
       <button class="primario" type="submit" style="width:100%">Entrar</button>
     </form>
     <p id="link-primeiro-acesso" style="display:none; text-align:center; margin-top:10px;">
       <a href="#" onclick="mostrarPrimeiroAcesso(event)">Primeiro acesso / tenho um código de ativação</a>
+    </p>
+    <p style="text-align:center; margin-top:10px;">
+      <a href="#" onclick="voltarInicio(event)">← Voltar à página inicial</a>
     </p>
   </div>
 
@@ -41,10 +53,16 @@
     <form onsubmit="submeterAtivacao(event)">
       <p><input type="email" id="ativ-email" placeholder="Email" required style="width:100%"></p>
       <p><input type="text" id="ativ-codigo" placeholder="Código de ativação" required style="width:100%"></p>
-      <p><input type="password" id="ativ-password" placeholder="Nova password" required style="width:100%"></p>
+      <p class="campo-password">
+        <input type="password" id="ativ-password" placeholder="Nova password" required style="width:100%">
+        <button type="button" class="alternar-password" onclick="alternarPassword('ativ-password', this)" aria-label="Mostrar password">👁</button>
+      </p>
       <p id="erro-ativacao" style="color:var(--alerta); display:none;"></p>
       <button class="primario" type="submit" style="width:100%">Definir password e entrar</button>
     </form>
+    <p style="text-align:center; margin-top:10px;">
+      <a href="#" onclick="voltarInicio(event)">← Voltar à página inicial</a>
+    </p>
   </div>
 </div>
 
@@ -53,12 +71,58 @@
 <script>
 let tipoEscolhido = 'cliente';
 
+async function carregarConteudoInicial() {
+  const { data } = await supabase.from('configuracoes').select('chave, valor');
+  const config = {};
+  (data || []).forEach(c => config[c.chave] = c.valor);
+
+  if (config.empresa_logo_url) {
+    const img = document.getElementById('cabecalho-logo');
+    img.src = config.empresa_logo_url;
+    img.style.display = 'inline-block';
+  }
+  if (config.home_titulo) document.getElementById('home-titulo').textContent = config.home_titulo;
+  if (config.home_subtitulo) document.getElementById('home-subtitulo').textContent = config.home_subtitulo;
+  if (config.home_imagem_url) {
+    const img = document.getElementById('home-imagem');
+    img.src = config.home_imagem_url;
+    img.style.display = 'block';
+  }
+  if (config.home_descricao_imagem) {
+    const p = document.getElementById('home-descricao-imagem');
+    p.textContent = config.home_descricao_imagem;
+    p.style.display = 'block';
+  }
+  if (config.home_creditos_imagem) {
+    const p = document.getElementById('home-creditos-imagem');
+    p.textContent = config.home_creditos_imagem;
+    p.style.display = 'block';
+  }
+}
+
+function alternarPassword(idCampo, botao) {
+  const campo = document.getElementById(idCampo);
+  const aMostrar = campo.type === 'password';
+  campo.type = aMostrar ? 'text' : 'password';
+  botao.textContent = aMostrar ? '🙈' : '👁';
+  botao.setAttribute('aria-label', aMostrar ? 'Ocultar password' : 'Mostrar password');
+}
+
 function mostrarLogin(tipo) {
   tipoEscolhido = tipo;
   document.getElementById('titulo-login').textContent = tipo === 'admin' ? 'Acesso à Administração' : 'Acesso de Cliente';
   document.getElementById('form-login').style.display = 'block';
   document.getElementById('link-primeiro-acesso').style.display = tipo === 'cliente' ? 'block' : 'none';
   document.getElementById('escolha').style.display = 'none';
+}
+
+function voltarInicio(e) {
+  e.preventDefault();
+  document.getElementById('form-login').style.display = 'none';
+  document.getElementById('form-ativacao').style.display = 'none';
+  document.getElementById('escolha').style.display = 'block';
+  document.getElementById('erro-login').style.display = 'none';
+  document.getElementById('erro-ativacao').style.display = 'none';
 }
 
 function mostrarPrimeiroAcesso(e) {
@@ -109,6 +173,8 @@ async function submeterAtivacao(e) {
     erro.style.display = 'block';
   }
 }
+
+carregarConteudoInicial();
 </script>
 </body>
 </html>

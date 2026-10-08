@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mapa — GeoTrack</title>
 <link rel="stylesheet" href="../css/style.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>#envolvente{display:flex; gap:12px; margin:16px;} #mapa{flex:1; height:75vh;} #painel-lateral{width:340px;}</style>
@@ -24,8 +24,12 @@
     </select>
     <div style="position:relative;">
       <input id="busca" placeholder="Procurar cliente, código, processo DGT, título..." style="width:320px" oninput="procurar()">
-      <div id="sugestoes" style="position:absolute; background:var(--bg-painel); border:1px solid var(--borda); width:320px; z-index:10;"></div>
+      <div id="sugestoes" style="position:absolute; background:var(--bg-painel); border:1px solid var(--borda); width:320px; z-index:10000; box-shadow:0 4px 10px rgba(0,0,0,.15);"></div>
     </div>
+    <label style="display:flex; align-items:center; gap:6px; font-size:14px;">
+      <input type="checkbox" id="chk-zonas-anac" checked onchange="aplicarFiltros()"> Zonas ANAC
+    </label>
+    <button onclick="limparMedicoes()">Limpar medições</button>
   </div>
 </div>
 
@@ -40,11 +44,11 @@
 <script src="../js/auth.js"></script>
 <script src="../js/tema.js"></script>
 <script src="../js/nav.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.geometryutil/0.10.3/leaflet.geometryutil.min.js"></script>
 <script>
-let mapa, camadaProjetos, todosProjetos = [], todosClientes = [];
+let mapa, camadaProjetos, camadaZonasAnac, todosProjetos = [], todosClientes = [], todasZonasAnac = [];
 
 const CORES_ESTADO = { aberto:'#3b82f6', em_curso:'#b8860b', concluido:'#1f6f54', atrasado:'#c0392b', cancelado:'#888' };
 
@@ -54,6 +58,8 @@ async function iniciar() {
   renderNavAdmin('mapa.html');
   iniciarMapa();
   await carregarClientes();
+  await carregarTodosProjetosParaFiltro();
+  await carregarZonasAnac();
   await carregarProjetosEMostrar();
 }
 
@@ -64,13 +70,18 @@ function iniciarMapa() {
   osm.addTo(mapa);
   L.control.layers({ 'OpenStreetMap': osm, 'ESRI World Imagery': esri }).addTo(mapa);
 
-  const desenhados = new L.FeatureGroup().addTo(mapa);
+  // Só ferramentas de desenho/medição aqui — sem a caixa "Edit layers" (o
+  // "Save"/"Cancel" dela só confundia, porque isto é só medição, não grava
+  // nada na base de dados. Para limpar os riscos de medição há o botão
+  // "Limpar medições" por cima do mapa.
+  window.camadaMedicoes = new L.FeatureGroup().addTo(mapa);
   mapa.addControl(new L.Control.Draw({
+    position: 'topleft',
     draw: { polygon: true, polyline: true, marker: false, circle: false, rectangle: false, circlemarker: false },
-    edit: { featureGroup: desenhados },
+    edit: false,
   }));
   mapa.on(L.Draw.Event.CREATED, (e) => {
-    desenhados.addLayer(e.layer);
+    window.camadaMedicoes.addLayer(e.layer);
     let medida = '';
     if (e.layerType === 'polyline') {
       medida = 'Distância: ' + (L.GeometryUtil.length(e.layer) / 1000).toFixed(3) + ' km';
@@ -81,6 +92,11 @@ function iniciarMapa() {
   });
 
   camadaProjetos = L.layerGroup().addTo(mapa);
+  camadaZonasAnac = L.layerGroup().addTo(mapa);
+}
+
+function limparMedicoes() {
+  window.camadaMedicoes.clearLayers();
 }
 
 async function carregarClientes() {
@@ -89,15 +105,36 @@ async function carregarClientes() {
   document.getElementById('filtro-cliente').innerHTML += todosClientes.map(c => `<option value="${c.id}">${c.cliente_nome}</option>`).join('');
 }
 
+// Lista TODOS os projetos no filtro à partida — antes só aparecia algo
+// neste select depois de se escolher um cliente, o que obrigava a saber
+// sempre o cliente primeiro.
+function preencherFiltroProjeto(lista) {
+  const selProjeto = document.getElementById('filtro-projeto');
+  const atual = selProjeto.value;
+  selProjeto.innerHTML = '<option value="">Todos os projetos</option>' +
+    lista.map(p => `<option value="${p.id}">${p.titulo}</option>`).join('');
+  if (lista.some(p => p.id === atual)) selProjeto.value = atual;
+}
+
+async function carregarTodosProjetosParaFiltro() {
+  const { data } = await supabase.from('projetos').select('id, titulo').order('titulo');
+  preencherFiltroProjeto(data || []);
+}
+
 async function aoFiltrarCliente() {
   const clienteId = document.getElementById('filtro-cliente').value;
-  const selProjeto = document.getElementById('filtro-projeto');
-  selProjeto.innerHTML = '<option value="">Todos os projetos</option>';
   if (clienteId) {
-    const { data } = await supabase.from('projetos').select('id, titulo').eq('cliente_id', clienteId);
-    (data || []).forEach(p => selProjeto.innerHTML += `<option value="${p.id}">${p.titulo}</option>`);
+    const { data } = await supabase.from('projetos').select('id, titulo').eq('cliente_id', clienteId).order('titulo');
+    preencherFiltroProjeto(data || []);
+  } else {
+    await carregarTodosProjetosParaFiltro();
   }
   aplicarFiltros();
+}
+
+async function carregarZonasAnac() {
+  const { data } = await supabase.from('zonas_anac_mapa').select('*');
+  todasZonasAnac = data || [];
 }
 
 async function carregarProjetosEMostrar() {
@@ -115,6 +152,29 @@ function aplicarFiltros() {
   todosProjetos
     .filter(p => (!clienteId || p.cliente_id === clienteId) && (!projetoId || p.id === projetoId) && (!estado || p.estado === estado) && p.geom_geojson)
     .forEach(p => desenharProjeto(p));
+
+  camadaZonasAnac.clearLayers();
+  if (document.getElementById('chk-zonas-anac').checked) {
+    todasZonasAnac.forEach(desenharZonaAnac);
+  }
+
+  // Zoom automático: se um projeto específico ficou escolhido no filtro,
+  // vai diretamente para ele (antes só acontecia escolhendo pela pesquisa).
+  if (projetoId) {
+    const p = todosProjetos.find(x => x.id === projetoId);
+    if (p && p.geom_geojson) zoomParaProjeto(p);
+  }
+}
+
+function desenharZonaAnac(z) {
+  if (!z.geom_geojson) return;
+  let geojson;
+  try { geojson = JSON.parse(z.geom_geojson); } catch (e) { return; }
+  const camada = L.geoJSON(geojson, {
+    style: { color: '#c0392b', weight: 2, dashArray: '6 4', fillOpacity: 0.08 },
+    pointToLayer: (f, latlng) => L.circle(latlng, { radius: z.raio_metros || 200, color: '#c0392b', weight: 2, dashArray: '6 4', fillOpacity: 0.08 }),
+  }).addTo(camadaZonasAnac);
+  camada.bindTooltip('Zona ANAC: ' + (z.nome || 'sem nome'));
 }
 
 function desenharProjeto(p) {
@@ -166,6 +226,10 @@ function irParaProjeto(id) {
   if (!p || !p.geom_geojson) return;
   document.getElementById('sugestoes').innerHTML = '';
   document.getElementById('busca').value = '';
+  zoomParaProjeto(p);
+}
+
+function zoomParaProjeto(p) {
   let geojson;
   try { geojson = JSON.parse(p.geom_geojson); } catch (e) { return; }
   const camada = L.geoJSON(geojson);
